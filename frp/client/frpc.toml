@@ -1,0 +1,21 @@
+# frpc 客户端配置（内网服务器）
+
+serverAddr = "你的公网IP"
+serverPort = 7000
+auth.token = "quant2024"
+
+# 前端穿透：公网 :8073 → 内网 :8071
+[[proxies]]
+name = "quant-frontend"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8071
+remotePort = 8073
+
+# 后端API穿透：公网 :8072 → 内网 :8072
+[[proxies]]
+name = "quant-backend"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8072
+remotePort = 8072

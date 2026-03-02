@@ -1,0 +1,3 @@
+# frps 服务端配置（公网服务器）
+bindPort = 7000
+auth.token = "quant2024"
