@@ -3,6 +3,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.tasks.fetch_quotes import runFetchQuotes
 from app.tasks.detect_signals import runDetectSignals, runSendNotifications
+from app.tasks.fetch_heat import runFetchHeat
 from app.utils.logger import setupLogger
 
 logger = setupLogger("scheduler")
@@ -37,6 +38,15 @@ def initScheduler() -> None:
         trigger=CronTrigger(hour=18, minute=45, day_of_week="mon-fri"),
         id="send_notifications",
         name="推送微信通知",
+        replace_existing=True,
+    )
+
+    # 每个交易日15:30拉取股票热度数据
+    scheduler.add_job(
+        runFetchHeat,
+        trigger=CronTrigger(hour=15, minute=30, day_of_week="mon-fri"),
+        id="fetch_stock_heat",
+        name="拉取股票热度",
         replace_existing=True,
     )
 

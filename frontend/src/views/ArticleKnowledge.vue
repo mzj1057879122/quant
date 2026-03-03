@@ -266,6 +266,13 @@ function probabilityColor(p) {
   return '#f56c6c'
 }
 
+function heatTag(score) {
+  if (score == null) return { text: '-', type: 'info' }
+  if (score >= 70) return { text: `${score} 火热`, type: 'danger' }
+  if (score >= 40) return { text: `${score} 温和`, type: 'warning' }
+  return { text: `${score} 冷门`, type: 'info' }
+}
+
 function formatStatus(s) {
   return { pending: '待处理', processing: '分析中', completed: '已完成', failed: '失败' }[s] || s
 }
@@ -415,6 +422,12 @@ onUnmounted(() => { stopPolling(); stopSummaryPolling() })
                   />
                   <span :style="{ color: probabilityColor(row.probability), fontWeight: 'bold', fontSize: '13px', minWidth: '36px' }">{{ row.probability }}%</span>
                 </div>
+                <span v-else style="color: #c0c4cc">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="热度" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="row.heatScore != null" :type="heatTag(row.heatScore).type" size="small">{{ heatTag(row.heatScore).text }}</el-tag>
                 <span v-else style="color: #c0c4cc">-</span>
               </template>
             </el-table-column>

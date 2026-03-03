@@ -22,6 +22,7 @@
 - 后端：`cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port 8072 --reload`
 - 前端：`cd frontend && npm run dev`
 - 后端日志：`/tmp/quant-backend.log`
+- 公网隧道：`cd script/cloudflared && bash frp.sh start`（首次部署用 `bash setup-ec2.sh`）
 
 ## 项目结构
 
@@ -75,8 +76,18 @@ quant/
 ├── version/                               # 版本归档（大改动记录）
 │   ├── knowledge-system-v1.md            # 知识学习系统v1→v2演变记录
 │   └── trading-framework-v1.md           # 交易框架JSON结构v1→v2演变记录
+├── script/
+│   └── cloudflared/                       # 公网隧道脚本
+│       ├── setup-ec2.sh                  # 首次部署（EC2 frps + 安全组 + frpc）
+│       ├── frp.sh                        # 日常启停管理
+│       ├── frpc                          # frp 客户端二进制
+│       ├── frpc.toml                     # frpc 配置
+│       └── proxy.js                      # 本地合并代理
+├── deploy.sh                              # 新服务器一键部署
+├── run.sh                                 # 本地服务启停
+├── env.sh                                 # 公共端口配置
 ├── frontend/
-│   ├── vite.config.js                 # Vite配置（host: 0.0.0.0）
+│   ├── vite.config.js                 # Vite配置（host: 0.0.0.0, allowedHosts: all）
 │   └── src/
 │       ├── main.js
 │       ├── App.vue
@@ -154,12 +165,29 @@ DEFAULT_PARAMS = {
 - 成功日志：简洁，不需要详细信息
 - 错误日志：必须详细，包含完整的错误堆栈和上下文信息
 
+## 公网访问（frp 内网穿透）
+
+- **架构**：公网用户 → AWS EC2(frps:8073) → frp隧道 → 内网服务器(前端:8071 / 后端:8072)
+- **EC2**：`18.237.153.223`（us-west-2, t3.micro, rds-query），AWS profile: `zejian.ma`
+- **frps**：运行在 EC2 上，控制端口 7000，HTTP vhost 端口 8073
+- **frpc**：运行在内网服务器，连接 EC2 frps，注册两个 HTTP 代理（前端 + 后端 /api）
+- **公网地址**：`http://18.237.153.223:8073`
+- **安全组**：已开放 7000（frp控制）和 8073（HTTP访问）
+- **认证**：frp token `quant2024secret`
+- **Vite 配置**：已添加 `allowedHosts: 'all'` 允许非 localhost 域名访问
+
+### 踩坑记录
+- **Sealos SSH 不支持 TCP 转发**：Sealos Devbox 的 Go SSH 服务器端口监听正常但数据转发被 reset，反向隧道(-R)和本地转发(-L)均不可用
+- **内网限制 Cloudflare**：cloudflared 隧道本地代理通了但公网访问被内网出口拦截
+- **Sealos 进程存活**：SSH 断开后 nohup/setsid 进程均被清理，不适合跑持久服务
+
 ## 已知问题与解决记录
 
 - **akshare北交所SSL报错**：`ak.stock_info_a_code_name()` 会请求北交所（www.bse.cn）导致SSL错误，已改为分开拉取沪深股票（`stock_info_sh_name_code` + `stock_info_sz_name_code`），跳过北交所
 - **前端远程访问**：Vite默认绑定127.0.0.1，已在vite.config.js中添加 `host: '0.0.0.0'` 允许远程访问
 - **东方财富API被封**：`push2his.eastmoney.com` 从服务器访问不通（云服务器IP被封），已改为双数据源机制，腾讯优先
 - **Alembic % 转义**：数据库密码含 `%` 字符导致 configparser 插值报错，在 `env.py` 中用 `.replace("%", "%%")` 解决
+- **Vite 7.x allowedHosts**：Vite 7 默认拦截非 localhost 的 Host 头请求返回 403，需配置 `allowedHosts: 'all'`
 
 ## 版本归档规范
 

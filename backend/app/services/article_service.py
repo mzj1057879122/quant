@@ -23,8 +23,10 @@ logger = setupLogger("article_service")
 
 CLAUDE_CLI = "/home/zejianma/.nvm/versions/node/v24.13.0/bin/claude"
 WORK_DIR = "/home/zejianma/quant"
-ARTICLE_TIMEOUT = 60
-SUMMARY_TIMEOUT = 120
+ARTICLE_TIMEOUT = 120
+SUMMARY_TIMEOUT = 180
+SEGMENT_CHAR_LIMIT = 5000  # 超过此长度则分段处理
+SEGMENT_SIZE = 3000         # 每段目标字数
 
 
 # ==================== 股票技术数据采集 ====================
@@ -170,6 +172,19 @@ def collectStockPool(db: Session, articles: list, watchList: list[str] | None = 
         if data:
             technicalData.append(data)
 
+    # 补充热度数据
+    if technicalData:
+        from app.services.heat_service import getStockHeat
+        codes = [td["code"] for td in technicalData]
+        heatMap = getStockHeat(db, codes)
+        for td in technicalData:
+            heat = heatMap.get(td["code"])
+            if heat:
+                td["heatScore"] = heat["heatScore"]
+                td["xqFollowRank"] = heat["xqFollowRank"]
+                td["xqTweetRank"] = heat["xqTweetRank"]
+                td["baiduHot"] = heat["baiduHot"]
+
     logger.info(f"股票池收集完成 文章提及={len(stockNames)} 匹配={len(nameToCode)} 关注列表={len(watchList or [])} 技术数据={len(technicalData)}")
     return technicalData
 
@@ -313,6 +328,16 @@ def _formatTechSection(technicalData: list[dict]) -> str:
             section += f"  历史突破成功率: {td['breakoutSuccessRate']:.0f}%"
         statusMap = {"approaching": "接近前高", "breakout": "已突破", "below": "在前高下方"}
         section += f" | 当前状态: {statusMap.get(td.get('currentStatus', ''), td.get('currentStatus', ''))}\n"
+        if td.get('heatScore') is not None:
+            heatLabel = "火热" if td['heatScore'] >= 70 else "温和" if td['heatScore'] >= 40 else "冷门"
+            section += f"  热度: {td['heatScore']}分({heatLabel})"
+            if td.get('xqFollowRank'):
+                section += f" | 雪球关注排名: {td['xqFollowRank']}"
+            if td.get('xqTweetRank'):
+                section += f" | 雪球讨论排名: {td['xqTweetRank']}"
+            if td.get('baiduHot'):
+                section += " | 百度热搜"
+            section += "\n"
         if td.get('recentQuotes'):
             closes = "→".join(f"{q['close']}" for q in td['recentQuotes'])
             section += f"  最近5天收盘: {closes}\n"
@@ -349,7 +374,7 @@ def buildProbabilityPrompt(stockViews: list[dict], technicalData: list[dict]) ->
 
 评估规则：
 - probability 为0-100整数，代表次日上涨概率
-- 综合考虑：作者观点方向（看多人数多→加分）、技术趋势（5日/10日涨幅为正→加分）、量能（量比>1→加分）、前高位置（接近前高且历史突破率高→加分，突破失败风险→减分）
+- 综合考虑：作者观点方向（看多人数多→加分）、技术趋势（5日/10日涨幅为正→加分）、量能（量比>1→加分）、前高位置（接近前高且历史突破率高→加分，突破失败风险→减分）、市场热度（热度≥70为火热→市场关注度高，情绪面加分但需警惕过热；热度≤30为冷门→关注度低；百度热搜→短期情绪极端活跃）
 - 只输出有技术数据的股票，没有行情数据的跳过
 - reason 要简洁，点出最关键的1-2个因素"""
 
@@ -407,6 +432,122 @@ def parseJson(output: str) -> dict | None:
     return None
 
 
+# ==================== 分段处理 ====================
+
+def splitArticle(content: str) -> list[str]:
+    """将长文章按段落分段，每段不超过 SEGMENT_SIZE 字"""
+    paragraphs = re.split(r"\n{2,}", content)
+    segments = []
+    current = ""
+    for p in paragraphs:
+        p = p.strip()
+        if not p:
+            continue
+        if current and len(current) + len(p) > SEGMENT_SIZE:
+            segments.append(current.strip())
+            current = p
+        else:
+            current = current + "\n\n" + p if current else p
+    if current.strip():
+        segments.append(current.strip())
+    # 如果某段还是太长（没有段落分隔的大块文本），按字数硬切
+    result = []
+    for seg in segments:
+        if len(seg) <= SEGMENT_SIZE * 1.5:
+            result.append(seg)
+        else:
+            for i in range(0, len(seg), SEGMENT_SIZE):
+                chunk = seg[i:i + SEGMENT_SIZE]
+                if chunk.strip():
+                    result.append(chunk.strip())
+    return result
+
+
+def buildSegmentPrompt(article: Article, segIndex: int, totalSegs: int, segContent: str) -> str:
+    """单段分析 prompt：提取该段中的观点"""
+    header = f"文章日期：{article.articleDate}"
+    if article.title:
+        header += f"\n标题：{article.title}"
+    if article.author:
+        header += f"\n作者：{article.author}"
+
+    return f"""你是A股短线交易分析助手。以下是一篇文章的第{segIndex}/{totalSegs}段，请提取这一段中的观点。
+
+{header}
+
+本段内容：
+{segContent}
+
+请严格输出以下JSON格式（不要用markdown代码块包裹，直接输出JSON）：
+{{
+  "marketView": "本段中作者对大盘/市场的判断（没有则输出空字符串）",
+  "stockViews": [
+    {{
+      "name": "股票名称",
+      "opinion": "看多/看空/中性/观望",
+      "logic": "分析逻辑",
+      "strategy": "操作策略",
+      "risk": "风险点"
+    }}
+  ],
+  "sectorViews": [
+    {{
+      "name": "板块名称",
+      "opinion": "看多/看空/中性",
+      "logic": "板块逻辑",
+      "keyStocks": ["关键票"]
+    }}
+  ],
+  "keyPredictions": ["本段中的关键预判"],
+  "tradingAdvice": "本段中的操作建议（没有则输出空字符串）"
+}}
+
+注意：只提取本段中明确出现的观点，没有的字段输出空值。"""
+
+
+def buildMergePrompt(article: Article, segmentResults: list[dict]) -> str:
+    """合并多段分析结果的 prompt"""
+    segSection = ""
+    for i, seg in enumerate(segmentResults, 1):
+        segSection += f"\n--- 第{i}段分析 ---\n{json.dumps(seg, ensure_ascii=False)}\n"
+
+    return f"""你是A股短线交易分析助手。以下是一篇文章分段分析后的结果，请合并去重，生成最终综合分析。
+
+文章：{article.title or '无标题'}（作者：{article.author or '未知'}，日期：{article.articleDate}）
+
+各段分析结果：
+{segSection}
+
+请合并为一个最终JSON（不要用markdown代码块包裹，直接输出JSON）：
+{{
+  "marketView": "作者对大盘/市场情绪的整体判断（综合各段）",
+  "stockViews": [
+    {{
+      "name": "股票名称",
+      "opinion": "看多/看空/中性/观望",
+      "logic": "综合分析逻辑",
+      "strategy": "操作策略",
+      "risk": "风险点"
+    }}
+  ],
+  "sectorViews": [
+    {{
+      "name": "板块名称",
+      "opinion": "看多/看空/中性",
+      "logic": "板块逻辑",
+      "keyStocks": ["关键票"]
+    }}
+  ],
+  "keyPredictions": ["关键预判（去重合并）"],
+  "tradingAdvice": "操作建议总结"
+}}
+
+注意：
+- 同一只股票在多段出现的，合并为一条，综合各段观点
+- 去掉重复内容，保留最完整的描述
+- opinion 必须是"看多/看空/中性/观望"四选一"""
+
+
 # ==================== 文章提交与单篇分析 ====================
 
 def submitArticle(db: Session, title: str | None, author: str | None, content: str, source: str | None, articleDate=None, sourceUrl: str | None = None) -> Article:
@@ -441,19 +582,64 @@ async def processArticleAsync(articleId: int) -> None:
 
         startTime = time.time()
         try:
-            prompt = buildArticlePrompt(article)
-            stdout, stderr, returncode = await callClaude(prompt, ARTICLE_TIMEOUT)
-            duration = int(time.time() - startTime)
+            contentLen = len(article.content or "")
 
-            if returncode != 0 or not stdout:
-                article.status = "failed"
-                article.errorMessage = stderr or f"CLI退出码: {returncode}"
-                article.processDuration = duration
-                logger.error(f"单篇分析失败 id={articleId} returncode={returncode}")
-                db.commit()
-                return
+            if contentLen <= SEGMENT_CHAR_LIMIT:
+                # ===== 短文章：单次分析 =====
+                prompt = buildArticlePrompt(article)
+                stdout, stderr, returncode = await callClaude(prompt, ARTICLE_TIMEOUT)
+                duration = int(time.time() - startTime)
 
-            parsed = parseJson(stdout)
+                if returncode != 0 or not stdout:
+                    article.status = "failed"
+                    article.errorMessage = stderr or f"CLI退出码: {returncode}"
+                    article.processDuration = duration
+                    logger.error(f"单篇分析失败 id={articleId} returncode={returncode}")
+                    db.commit()
+                    return
+
+                parsed = parseJson(stdout)
+            else:
+                # ===== 长文章：分段分析 + 合并 =====
+                segments = splitArticle(article.content)
+                logger.info(f"长文章分段 id={articleId} 总长={contentLen} 段数={len(segments)}")
+
+                segmentResults = []
+                for i, seg in enumerate(segments, 1):
+                    segPrompt = buildSegmentPrompt(article, i, len(segments), seg)
+                    stdout, stderr, returncode = await callClaude(segPrompt, ARTICLE_TIMEOUT)
+                    if returncode != 0 or not stdout:
+                        logger.error(f"第{i}段分析失败 id={articleId} rc={returncode}")
+                        continue
+                    segParsed = parseJson(stdout)
+                    if segParsed:
+                        segmentResults.append(segParsed)
+                    else:
+                        logger.error(f"第{i}段JSON解析失败 id={articleId}")
+
+                if not segmentResults:
+                    article.status = "failed"
+                    article.errorMessage = "所有分段分析均失败"
+                    article.processDuration = int(time.time() - startTime)
+                    db.commit()
+                    return
+
+                if len(segmentResults) == 1:
+                    parsed = segmentResults[0]
+                else:
+                    # 合并多段结果
+                    mergePrompt = buildMergePrompt(article, segmentResults)
+                    stdout, stderr, returncode = await callClaude(mergePrompt, ARTICLE_TIMEOUT)
+                    if returncode != 0 or not stdout:
+                        article.status = "failed"
+                        article.errorMessage = stderr or f"合并CLI退出码: {returncode}"
+                        article.processDuration = int(time.time() - startTime)
+                        db.commit()
+                        return
+                    parsed = parseJson(stdout)
+
+                duration = int(time.time() - startTime)
+
             if not parsed:
                 article.status = "failed"
                 article.errorMessage = f"JSON解析失败，原始输出前500字：{stdout[:500]}"
@@ -465,7 +651,7 @@ async def processArticleAsync(articleId: int) -> None:
             article.status = "completed"
             article.resultSummary = json.dumps(parsed, ensure_ascii=False)
             article.processDuration = duration
-            logger.info(f"单篇分析完成 id={articleId} duration={duration}s")
+            logger.info(f"单篇分析完成 id={articleId} 长度={contentLen} duration={duration}s")
 
         except asyncio.TimeoutError:
             duration = int(time.time() - startTime)
@@ -620,6 +806,12 @@ async def generateDailySummaryAsync(summaryDate: date) -> None:
                                     "synthesis": "仅技术面分析（无作者观点）",
                                     "suggestedAction": "",
                                 })
+                        # 合并热度数据到 stockViews
+                        heatMap = {td["name"]: td.get("heatScore") for td in technicalData if td.get("heatScore") is not None}
+                        for sv in stockViews:
+                            hs = heatMap.get(sv.get("name"))
+                            if hs is not None:
+                                sv["heatScore"] = hs
                         summary.stockViews = json.dumps(stockViews, ensure_ascii=False)
                         summary.rawOutput = stdout1 + "\n\n===== 概率分析 =====\n" + stdout2
                         db.commit()
