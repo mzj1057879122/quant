@@ -12,8 +12,10 @@ const menuItems = [
   { index: '/', icon: 'DataAnalysis', title: '仪表盘' },
   { index: '/stocks', icon: 'List', title: '股票列表' },
   { index: '/signals', icon: 'Bell', title: '信号列表' },
+  { index: '/strong', icon: 'TrendCharts', title: '强势股' },
   { index: '/knowledge', icon: 'Reading', title: '知识学习' },
   { index: '/trading', icon: 'Notebook', title: '交易框架' },
+  { index: '/cases', icon: 'Collection', title: '案例分析' },
   { index: '/settings', icon: 'Setting', title: '系统设置' },
 ]
 

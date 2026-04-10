@@ -26,6 +26,12 @@ const routes = [
     meta: { title: '信号列表' },
   },
   {
+    path: '/strong',
+    name: 'StrongStock',
+    component: () => import('../views/StrongStock.vue'),
+    meta: { title: '强势股' },
+  },
+  {
     path: '/knowledge',
     name: 'ArticleKnowledge',
     component: () => import('../views/ArticleKnowledge.vue'),
@@ -38,6 +44,12 @@ const routes = [
     meta: { title: '交易框架' },
   },
   {
+  {
+    path: '/cases',
+    name: 'CaseStudy',
+    component: () => import('../views/CaseStudy.vue'),
+    meta: { title: '案例分析' },
+  },
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),

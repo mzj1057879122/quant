@@ -14,8 +14,8 @@ from app.utils.logger import setupLogger
 
 logger = setupLogger("quote_service")
 
-# 数据源配置：优先腾讯，东方财富备用
-_SOURCE_ORDER = ["tencent", "eastmoney"]
+# 数据源配置：腾讯优先，腾讯TX备用，东方财富兜底
+_SOURCE_ORDER = ["tencent", "tencent_tx", "eastmoney"]
 
 
 def _getMarketPrefix(stockCode: str) -> str:
@@ -36,6 +36,28 @@ def _fetchFromTencent(stockCode: str, startDate: str) -> pd.DataFrame:
     cutoff = date(int(startDate[:4]), int(startDate[4:6]), int(startDate[6:]))
     df = df[df["date"] >= cutoff]
     # 统一列名
+    df = df.rename(columns={
+        "date": "tradeDate",
+        "open": "openPrice",
+        "close": "closePrice",
+        "high": "highPrice",
+        "low": "lowPrice",
+        "volume": "volume",
+        "amount": "turnover",
+    })
+    return df
+
+
+def _fetchFromTencentTx(stockCode: str, startDate: str, endDate: str) -> pd.DataFrame:
+    """腾讯TX数据源：stock_zh_a_hist_tx（不同接口，独立限流）"""
+    symbol = _getMarketPrefix(stockCode) + stockCode
+    df = ak.stock_zh_a_hist_tx(symbol=symbol, adjust="qfq")
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    cutoff = date(int(startDate[:4]), int(startDate[4:6]), int(startDate[6:]))
+    endD = date(int(endDate[:4]), int(endDate[4:6]), int(endDate[6:]))
+    df = df[(df["date"] >= cutoff) & (df["date"] <= endD)]
     df = df.rename(columns={
         "date": "tradeDate",
         "open": "openPrice",
@@ -86,6 +108,8 @@ def _fetchWithFallback(stockCode: str, startDate: str, endDate: str) -> pd.DataF
         try:
             if source == "tencent":
                 df = _fetchFromTencent(stockCode, startDate)
+            elif source == "tencent_tx":
+                df = _fetchFromTencentTx(stockCode, startDate, endDate)
             else:
                 df = _fetchFromEastmoney(stockCode, startDate, endDate)
             if not df.empty:

@@ -21,10 +21,8 @@ start_backend() {
         return
     fi
     cd "$DIR/backend"
-    source venv/bin/activate
     nohup uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" > /tmp/quant-backend.log 2>&1 &
     echo $! > "$PID_DIR/backend.pid"
-    deactivate
     echo "后端已启动 (PID $!, 端口 $BACKEND_PORT)"
 }
 
@@ -34,7 +32,7 @@ start_frontend() {
         return
     fi
     cd "$DIR/frontend"
-    nohup npx serve -s dist -l "$FRONTEND_PORT" > /tmp/quant-frontend.log 2>&1 &
+    nohup npm run dev > /tmp/quant-frontend.log 2>&1 &
     echo $! > "$PID_DIR/frontend.pid"
     echo "前端已启动 (PID $!, 端口 $FRONTEND_PORT)"
 }
