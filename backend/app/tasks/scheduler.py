@@ -5,6 +5,8 @@ from app.tasks.fetch_quotes import runFetchQuotes
 from app.tasks.detect_signals import runDetectSignals, runSendNotifications
 from app.tasks.fetch_heat import runFetchHeat
 from app.tasks.fetch_morning_brief import runFetchMorningBrief
+from app.tasks.daily_prediction import runDailyPrediction
+from app.tasks.verify_predictions import runVerifyPredictions
 from app.utils.logger import setupLogger
 
 logger = setupLogger("scheduler")
@@ -57,6 +59,24 @@ def initScheduler() -> None:
         trigger=CronTrigger(hour=1, minute=0, day_of_week="mon-fri"),
         id="fetch_morning_brief",
         name="采集盘前纪要",
+        replace_existing=True,
+    )
+
+    # 每个交易日16:00（北京时间，UTC+8，即 UTC 08:00）验证昨日预测
+    scheduler.add_job(
+        runVerifyPredictions,
+        trigger=CronTrigger(hour=8, minute=0, day_of_week="mon-fri"),
+        id="verify_predictions",
+        name="验证昨日预测",
+        replace_existing=True,
+    )
+
+    # 每个交易日16:30（北京时间，UTC+8，即 UTC 08:30）执行每日预测打分
+    scheduler.add_job(
+        runDailyPrediction,
+        trigger=CronTrigger(hour=8, minute=30, day_of_week="mon-fri"),
+        id="daily_prediction",
+        name="每日预测打分",
         replace_existing=True,
     )
 
