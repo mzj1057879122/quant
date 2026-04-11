@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getStockDetail, getQuotes, fetchQuotes } from '../api/stock'
 import { getBreakoutAnalysis, getSignalList } from '../api/signal'
-import { getStockBacktest } from '../api/backtest'
+import { getBacktestList } from '../api/backtest'
 import { getWatchlistItems, addWatchlistItem, deleteWatchlistItem } from '../api/watchlist'
 import KLineChart from '../components/KLineChart.vue'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -29,19 +29,24 @@ const watchlistItem = ref(null)
 async function loadData() {
   loading.value = true
   try {
-    const [stockRes, quoteRes, analysisRes, signalRes, btRes, wlRes] = await Promise.all([
+    const [stockRes, quoteRes, analysisRes, signalRes, btAllRes, btCorrectRes, wlRes] = await Promise.all([
       getStockDetail(stockCode).catch(() => null),
       getQuotes(stockCode, { limit: 250 }),
       getBreakoutAnalysis(stockCode).catch(() => null),
       getSignalList({ stockCode, pageSize: 100 }),
-      getStockBacktest(stockCode).catch(() => null),
+      getBacktestList({ stockCode, pageSize: 1 }).catch(() => null),
+      getBacktestList({ stockCode, isCorrect: 1, pageSize: 1 }).catch(() => null),
       getWatchlistItems({ status: '' }).catch(() => ({ items: [] })),
     ])
     stockInfo.value = stockRes
     quotes.value = quoteRes.items || []
     breakoutData.value = analysisRes
     signals.value = signalRes.items || []
-    backtestInfo.value = btRes
+    const btTotal = btAllRes?.total || 0
+    const btCorrect = btCorrectRes?.total || 0
+    backtestInfo.value = btTotal > 0
+      ? { total: btTotal, correct: btCorrect, rate: Math.round(btCorrect / btTotal * 1000) / 10 }
+      : null
     const wlItems = wlRes.items || []
     watchlistItem.value = wlItems.find(w => w.stockCode === stockCode) || null
   } catch (e) {
@@ -104,6 +109,24 @@ const statusMap = {
   none: { label: '无数据', type: 'info' },
 }
 
+const backtestColor = computed(() => {
+  const rate = backtestInfo.value?.rate
+  if (rate == null) return ''
+  if (rate >= 85) return '#67c23a'
+  if (rate >= 60) return '#e6a23c'
+  return '#f56c6c'
+})
+
+const watchlistStatusLabel = computed(() => {
+  const map = { watching: '关注中', holding: '持有', exited: '已出局' }
+  return map[watchlistItem.value?.status] || watchlistItem.value?.status || ''
+})
+
+const watchlistStatusTagType = computed(() => {
+  const map = { watching: 'primary', holding: 'success', exited: 'info' }
+  return map[watchlistItem.value?.status] || 'info'
+})
+
 onMounted(loadData)
 </script>
 
@@ -130,15 +153,6 @@ onMounted(loadData)
           </span>
         </div>
         <div style="display: flex; gap: 8px; align-items: center">
-          <!-- 回测胜率 -->
-          <el-tag v-if="backtestInfo && backtestInfo.total > 0" type="success" style="font-size: 13px">
-            回测胜率 {{ backtestInfo.rate }}% ({{ backtestInfo.correct }}/{{ backtestInfo.total }})
-          </el-tag>
-          <!-- watchlist 状态 -->
-          <el-tag v-if="watchlistItem" :type="watchlistItem.status === 'holding' ? 'success' : 'primary'" style="font-size: 13px">
-            {{ { watching: '关注中', holding: '持有', exited: '已出局' }[watchlistItem.status] || watchlistItem.status }}
-            <span v-if="watchlistItem.anchorPrice"> · 锚{{ watchlistItem.anchorPrice }}</span>
-          </el-tag>
           <el-button :type="watchlistItem ? 'default' : 'warning'" size="small" @click="toggleWatchlist">
             {{ watchlistItem ? '移出自选' : '加入自选' }}
           </el-button>
@@ -152,7 +166,22 @@ onMounted(loadData)
     <!-- K线图 -->
     <el-card style="margin-bottom: 20px">
       <template #header>
-        <span style="font-weight: 500">K线图</span>
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <span style="font-weight: 500">K线图</span>
+          <div style="display: flex; gap: 12px; align-items: center">
+            <!-- 回测胜率 -->
+            <span
+              v-if="backtestInfo"
+              :style="{ color: backtestColor, fontWeight: '500', fontSize: '13px' }"
+            >
+              回测胜率：{{ backtestInfo.rate }}% (正确{{ backtestInfo.correct }}/共{{ backtestInfo.total }}次)
+            </span>
+            <!-- watchlist 状态 -->
+            <el-tag v-if="watchlistItem" :type="watchlistStatusTagType" size="small">
+              {{ watchlistStatusLabel }}
+            </el-tag>
+          </div>
+        </div>
       </template>
       <div v-if="quotes.length === 0" style="text-align: center; color: #909399; padding: 60px 0">
         暂无行情数据，请先拉取数据

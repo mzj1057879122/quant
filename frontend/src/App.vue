@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useSignalStore } from './stores/signal'
 
@@ -8,18 +8,8 @@ const route = useRoute()
 const signalStore = useSignalStore()
 const isCollapse = ref(false)
 
-const menuItems = [
-  { index: '/', icon: 'DataAnalysis', title: '仪表盘' },
-  { index: '/watchlist', icon: 'StarFilled', title: '自选股池' },
-  { index: '/prediction', icon: 'TrendCharts', title: '预测看板' },
-  { index: '/signals', icon: 'Bell', title: '突破信号' },
-  { index: '/strong', icon: 'TopRight', title: '强势股' },
-  { index: '/brief', icon: 'Sunrise', title: '盘前纪要' },
-  { index: '/knowledge', icon: 'Reading', title: '知识学习' },
-  { index: '/trading', icon: 'Notebook', title: '交易框架' },
-  { index: '/cases', icon: 'Collection', title: '案例分析' },
-  { index: '/settings', icon: 'Setting', title: '系统设置' },
-]
+const knowledgePaths = ['/knowledge', '/trading', '/cases']
+const knowledgeSubMenuOpen = computed(() => knowledgePaths.includes(route.path))
 
 function handleMenuSelect(index) {
   router.push(index)
@@ -39,6 +29,7 @@ onMounted(() => {
       </div>
       <el-menu
         :default-active="route.path"
+        :default-openeds="knowledgeSubMenuOpen ? ['knowledge-sub'] : []"
         :collapse="isCollapse"
         background-color="#304156"
         text-color="#bfcbd9"
@@ -46,17 +37,66 @@ onMounted(() => {
         :collapse-transition="false"
         @select="handleMenuSelect"
       >
-        <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
-          <el-icon><component :is="item.icon" /></el-icon>
+        <el-menu-item index="/">
+          <el-icon><Odometer /></el-icon>
+          <template #title>仪表盘</template>
+        </el-menu-item>
+
+        <el-menu-item index="/watchlist">
+          <el-icon><Star /></el-icon>
+          <template #title>自选股池</template>
+        </el-menu-item>
+
+        <el-menu-item index="/prediction">
+          <el-icon><DataAnalysis /></el-icon>
+          <template #title>预测看板</template>
+        </el-menu-item>
+
+        <el-menu-item index="/signals">
+          <el-icon><Bell /></el-icon>
           <template #title>
-            <span>{{ item.title }}</span>
+            <span>突破信号</span>
             <el-badge
-              v-if="item.index === '/signals' && signalStore.unreadCount > 0"
+              v-if="signalStore.unreadCount > 0"
               :value="signalStore.unreadCount"
               :max="99"
               style="margin-left: 8px"
             />
           </template>
+        </el-menu-item>
+
+        <el-menu-item index="/strong">
+          <el-icon><Promotion /></el-icon>
+          <template #title>强势股</template>
+        </el-menu-item>
+
+        <el-menu-item index="/brief">
+          <el-icon><Document /></el-icon>
+          <template #title>盘前纪要</template>
+        </el-menu-item>
+
+        <el-sub-menu index="knowledge-sub">
+          <template #title>
+            <el-icon><Reading /></el-icon>
+            <span>知识库</span>
+          </template>
+          <el-menu-item index="/knowledge">
+            <el-icon><Memo /></el-icon>
+            <template #title>文章学习</template>
+          </el-menu-item>
+          <el-menu-item index="/trading">
+            <el-icon><Notebook /></el-icon>
+            <template #title>交易框架</template>
+          </el-menu-item>
+          <el-menu-item index="/cases">
+            <el-icon><Collection /></el-icon>
+            <template #title>案例库</template>
+          </el-menu-item>
+        </el-sub-menu>
+
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <template #title>设置</template>
         </el-menu-item>
       </el-menu>
     </el-aside>

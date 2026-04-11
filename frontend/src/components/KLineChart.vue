@@ -39,11 +39,11 @@ function renderChart() {
         yAxis: parseFloat(ph.highPrice),
         name: isAnchor ? `锚位 ${ph.highDate}` : `前高 ${ph.highDate}`,
         label: {
-          formatter: isAnchor ? `锚 ${parseFloat(ph.highPrice)}` : `前高 ${parseFloat(ph.highPrice)}`,
+          formatter: isAnchor ? `锚位 ${parseFloat(ph.highPrice).toFixed(2)}` : `前高 ${parseFloat(ph.highPrice)}`,
           position: 'end',
         },
         lineStyle: {
-          color: isAnchor ? '#e6a23c' : '#f56c6c',
+          color: '#f56c6c',
           type: 'dashed',
           width: 2,
         },
