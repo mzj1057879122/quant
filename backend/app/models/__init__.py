@@ -9,5 +9,6 @@ from app.models.daily_summary import DailySummary
 from app.models.trading_knowledge import TradingKnowledge
 from app.models.trading_framework import TradingFramework
 from app.models.stock_heat import StockHeat
+from app.models.limit_up_plate import LimitUpPlate
 
-__all__ = ["Stock", "DailyQuote", "PreviousHigh", "Signal", "UserConfig", "BreakoutAnalysis", "Article", "DailySummary", "TradingKnowledge", "TradingFramework", "StockHeat"]
+__all__ = ["Stock", "DailyQuote", "PreviousHigh", "Signal", "UserConfig", "BreakoutAnalysis", "Article", "DailySummary", "TradingKnowledge", "TradingFramework", "StockHeat", "LimitUpPlate"]

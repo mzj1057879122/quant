@@ -7,6 +7,7 @@ from app.tasks.fetch_heat import runFetchHeat
 from app.tasks.fetch_morning_brief import runFetchMorningBrief
 from app.tasks.daily_prediction import runDailyPrediction
 from app.tasks.verify_predictions import runVerifyPredictions
+from app.tasks.fetch_limit_up import runFetchLimitUp
 from app.utils.logger import setupLogger
 
 logger = setupLogger("scheduler")
@@ -80,6 +81,15 @@ def initScheduler() -> None:
         replace_existing=True,
     )
 
+    # 每个交易日16:00（北京时间，UTC+8，即 UTC 08:00）采集涨停板块数据
+    scheduler.add_job(
+        _runFetchLimitUp,
+        trigger=CronTrigger(hour=8, minute=0, day_of_week="mon-fri"),
+        id="fetch_limit_up",
+        name="采集涨停板块",
+        replace_existing=True,
+    )
+
     # 每周六10:00同步股票列表
     scheduler.add_job(
         _runSyncStockList,
@@ -126,3 +136,11 @@ def _runSyncStockList() -> None:
         logger.error(f"同步股票列表任务异常 错误={e}", exc_info=True)
     finally:
         db.close()
+
+
+def _runFetchLimitUp() -> None:
+    """采集涨停板块数据（定时任务包装）"""
+    try:
+        runFetchLimitUp()
+    except Exception as e:
+        logger.error(f"采集涨停板块任务异常 错误={e}", exc_info=True)
