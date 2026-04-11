@@ -30,22 +30,25 @@ function renderChart() {
   ])
   const volumes = sortedQuotes.map(q => q.volume)
 
-  // 前高标注线
+  // 前高/锚位标注线
   const markLines = props.previousHighs
     .filter(ph => ph.status === 'active')
-    .map(ph => ({
-      yAxis: parseFloat(ph.highPrice),
-      name: `前高 ${ph.highDate}`,
-      label: {
-        formatter: `前高 ${parseFloat(ph.highPrice)}`,
-        position: 'end',
-      },
-      lineStyle: {
-        color: '#f56c6c',
-        type: 'dashed',
-        width: 2,
-      },
-    }))
+    .map(ph => {
+      const isAnchor = ph.highType === 'anchor'
+      return {
+        yAxis: parseFloat(ph.highPrice),
+        name: isAnchor ? `锚位 ${ph.highDate}` : `前高 ${ph.highDate}`,
+        label: {
+          formatter: isAnchor ? `锚 ${parseFloat(ph.highPrice)}` : `前高 ${parseFloat(ph.highPrice)}`,
+          position: 'end',
+        },
+        lineStyle: {
+          color: isAnchor ? '#e6a23c' : '#f56c6c',
+          type: 'dashed',
+          width: 2,
+        },
+      }
+    })
 
   // 信号标记点
   const markPoints = props.signals.map(s => {

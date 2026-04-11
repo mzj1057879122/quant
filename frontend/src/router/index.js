@@ -23,13 +23,31 @@ const routes = [
     path: '/signals',
     name: 'SignalList',
     component: () => import('../views/SignalList.vue'),
-    meta: { title: '信号列表' },
+    meta: { title: '突破信号' },
   },
   {
     path: '/strong',
     name: 'StrongStock',
     component: () => import('../views/StrongStock.vue'),
     meta: { title: '强势股' },
+  },
+  {
+    path: '/watchlist',
+    name: 'WatchlistPool',
+    component: () => import('../views/WatchlistPool.vue'),
+    meta: { title: '自选股池' },
+  },
+  {
+    path: '/prediction',
+    name: 'PredictionBoard',
+    component: () => import('../views/PredictionBoard.vue'),
+    meta: { title: '预测看板' },
+  },
+  {
+    path: '/brief',
+    name: 'MorningBrief',
+    component: () => import('../views/MorningBrief.vue'),
+    meta: { title: '盘前纪要' },
   },
   {
     path: '/knowledge',
@@ -44,12 +62,12 @@ const routes = [
     meta: { title: '交易框架' },
   },
   {
-  {
     path: '/cases',
     name: 'CaseStudy',
     component: () => import('../views/CaseStudy.vue'),
     meta: { title: '案例分析' },
   },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),

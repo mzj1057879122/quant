@@ -10,9 +10,11 @@ const isCollapse = ref(false)
 
 const menuItems = [
   { index: '/', icon: 'DataAnalysis', title: '仪表盘' },
-  { index: '/stocks', icon: 'List', title: '股票列表' },
-  { index: '/signals', icon: 'Bell', title: '信号列表' },
-  { index: '/strong', icon: 'TrendCharts', title: '强势股' },
+  { index: '/watchlist', icon: 'StarFilled', title: '自选股池' },
+  { index: '/prediction', icon: 'TrendCharts', title: '预测看板' },
+  { index: '/signals', icon: 'Bell', title: '突破信号' },
+  { index: '/strong', icon: 'TopRight', title: '强势股' },
+  { index: '/brief', icon: 'Sunrise', title: '盘前纪要' },
   { index: '/knowledge', icon: 'Reading', title: '知识学习' },
   { index: '/trading', icon: 'Notebook', title: '交易框架' },
   { index: '/cases', icon: 'Collection', title: '案例分析' },

@@ -1,9 +1,11 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getStockDetail, getQuotes, fetchQuotes } from '../api/stock'
 import { getBreakoutAnalysis, getSignalList } from '../api/signal'
+import { getStockBacktest } from '../api/backtest'
+import { getWatchlistItems, addWatchlistItem, deleteWatchlistItem } from '../api/watchlist'
 import KLineChart from '../components/KLineChart.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
@@ -18,23 +20,46 @@ const signals = ref([])
 const loading = ref(false)
 const fetchLoading = ref(false)
 
+// 新增：回测胜率
+const backtestInfo = ref(null)
+
+// 新增：watchlist 状态
+const watchlistItem = ref(null)
+
 async function loadData() {
   loading.value = true
   try {
-    const [stockRes, quoteRes, analysisRes, signalRes] = await Promise.all([
+    const [stockRes, quoteRes, analysisRes, signalRes, btRes, wlRes] = await Promise.all([
       getStockDetail(stockCode).catch(() => null),
       getQuotes(stockCode, { limit: 250 }),
       getBreakoutAnalysis(stockCode).catch(() => null),
       getSignalList({ stockCode, pageSize: 100 }),
+      getStockBacktest(stockCode).catch(() => null),
+      getWatchlistItems({ status: '' }).catch(() => ({ items: [] })),
     ])
     stockInfo.value = stockRes
     quotes.value = quoteRes.items || []
     breakoutData.value = analysisRes
     signals.value = signalRes.items || []
+    backtestInfo.value = btRes
+    const wlItems = wlRes.items || []
+    watchlistItem.value = wlItems.find(w => w.stockCode === stockCode) || null
   } catch (e) {
     // 静默
   } finally {
     loading.value = false
+  }
+}
+
+async function toggleWatchlist() {
+  if (watchlistItem.value) {
+    await deleteWatchlistItem(stockCode)
+    watchlistItem.value = null
+    ElMessage.success('已从自选股池移除')
+  } else {
+    await addWatchlistItem({ stockCode, stockName: stockInfo.value?.stockName || stockCode })
+    await loadData()
+    ElMessage.success('已加入自选股池')
   }
 }
 
@@ -51,16 +76,22 @@ async function handleFetch() {
   }
 }
 
-// 将 breakoutData 转成 KLineChart 需要的 previousHighs 格式
+// 将 breakoutData 和 watchlist 锚位组合成 KLineChart 所需的 previousHighs 格式
 function getChartHighs() {
-  if (!breakoutData.value?.currentHigh) return []
-  const h = breakoutData.value.currentHigh
-  return [{
-    highPrice: h.highPrice,
-    highDate: h.highDate,
-    status: 'active',
-    highType: 'local_high',
-  }]
+  const highs = []
+  if (breakoutData.value?.currentHigh) {
+    const h = breakoutData.value.currentHigh
+    highs.push({ highPrice: h.highPrice, highDate: h.highDate, status: 'active', highType: 'local_high' })
+  }
+  if (watchlistItem.value?.anchorPrice) {
+    highs.push({
+      highPrice: watchlistItem.value.anchorPrice,
+      highDate: watchlistItem.value.anchorDate || '',
+      status: 'active',
+      highType: 'anchor',
+    })
+  }
+  return highs
 }
 
 const resultTagType = (result) => result === 'success' ? 'success' : 'danger'
@@ -98,9 +129,23 @@ onMounted(loadData)
             {{ stockInfo.industry }}
           </span>
         </div>
-        <el-button :loading="fetchLoading" type="primary" @click="handleFetch">
-          <el-icon><Download /></el-icon> 拉取最新数据
-        </el-button>
+        <div style="display: flex; gap: 8px; align-items: center">
+          <!-- 回测胜率 -->
+          <el-tag v-if="backtestInfo && backtestInfo.total > 0" type="success" style="font-size: 13px">
+            回测胜率 {{ backtestInfo.rate }}% ({{ backtestInfo.correct }}/{{ backtestInfo.total }})
+          </el-tag>
+          <!-- watchlist 状态 -->
+          <el-tag v-if="watchlistItem" :type="watchlistItem.status === 'holding' ? 'success' : 'primary'" style="font-size: 13px">
+            {{ { watching: '关注中', holding: '持有', exited: '已出局' }[watchlistItem.status] || watchlistItem.status }}
+            <span v-if="watchlistItem.anchorPrice"> · 锚{{ watchlistItem.anchorPrice }}</span>
+          </el-tag>
+          <el-button :type="watchlistItem ? 'default' : 'warning'" size="small" @click="toggleWatchlist">
+            {{ watchlistItem ? '移出自选' : '加入自选' }}
+          </el-button>
+          <el-button :loading="fetchLoading" type="primary" @click="handleFetch">
+            <el-icon><Download /></el-icon> 拉取最新数据
+          </el-button>
+        </div>
       </div>
     </el-card>
 

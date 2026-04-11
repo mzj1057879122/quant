@@ -9,6 +9,9 @@ from app.api.article import router as articleRouter
 from app.api.knowledge import router as knowledgeRouter
 from app.api.heat import router as heatRouter
 from app.api.strong import router as strongRouter
+from app.api.watchlist import router as watchlistRouter
+from app.api.backtest import router as backtestRouter
+from app.api.morning_brief import router as briefRouter
 
 apiRouter = APIRouter(prefix="/api/v1")
 
@@ -21,3 +24,6 @@ apiRouter.include_router(articleRouter)
 apiRouter.include_router(knowledgeRouter)
 apiRouter.include_router(heatRouter)
 apiRouter.include_router(strongRouter)
+apiRouter.include_router(watchlistRouter)
+apiRouter.include_router(backtestRouter)
+apiRouter.include_router(briefRouter)
