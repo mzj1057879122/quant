@@ -20,6 +20,12 @@ _DEFAULTS: dict[str, float] = {
     "conf_mid_signals": 1,
     "sector_retreat_days": 2,
     "dynamic_anchor_vol": 1.8,
+    # 消息面信号分值
+    "msg_self_limit_up": 2.0,
+    "msg_sector_active": 1.0,
+    "msg_sector_continue": 1.0,
+    "msg_sector_retreat": -1.0,
+    "msg_sector_cold": -1.0,
 }
 
 
