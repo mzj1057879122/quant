@@ -58,6 +58,19 @@ function changeClass(val) {
   return val >= 0 ? 'positive' : 'negative'
 }
 
+function formatLatestDate(dateStr) {
+  if (!dateStr) return '-'
+  const parts = dateStr.split('-')
+  if (parts.length < 3) return dateStr
+  return `${parts[1]}/${parts[2]}`
+}
+
+const summaryDataNote = computed(() => {
+  const d = data.value.items?.[0]?.latestDate
+  if (!d) return ''
+  return `数据截至 ${d} 收盘，每日16:30自动更新`
+})
+
 onMounted(loadData)
 </script>
 
@@ -90,6 +103,7 @@ onMounted(loadData)
         </el-card>
       </el-col>
     </el-row>
+    <div v-if="summaryDataNote" class="summary-note">{{ summaryDataNote }}</div>
 
     <!-- 筛选栏 -->
     <el-card shadow="never" class="filter-card">
@@ -153,7 +167,7 @@ onMounted(loadData)
           </template>
         </el-table-column>
         <el-table-column label="当前价" width="80" align="right">
-          <template #default="{ row }">{{ row.latestClose ?? '-' }}</template>
+          <template #default="{ row }">{{ row.latestClose != null ? row.latestClose.toFixed(2) : '-' }}</template>
         </el-table-column>
         <el-table-column label="锚位" width="80" align="right">
           <template #default="{ row }">{{ row.anchorPrice ?? '-' }}</template>
@@ -164,9 +178,14 @@ onMounted(loadData)
               v-if="row.changeFromAnchor !== null && row.changeFromAnchor !== undefined"
               :class="changeClass(row.changeFromAnchor)"
             >
-              {{ row.changeFromAnchor >= 0 ? '+' : '' }}{{ row.changeFromAnchor }}%
+              {{ row.changeFromAnchor >= 0 ? '+' : '' }}{{ Number(row.changeFromAnchor).toFixed(2) }}%
             </span>
             <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="行情日期" width="80" align="center">
+          <template #default="{ row }">
+            <span class="date-cell">{{ formatLatestDate(row.latestDate) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="技术信号" min-width="200">
@@ -258,5 +277,17 @@ onMounted(loadData)
 .negative {
   color: #f56c6c;
   font-weight: 600;
+}
+
+.summary-note {
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  margin-top: -8px;
+}
+
+.date-cell {
+  font-size: 12px;
+  color: #909399;
 }
 </style>

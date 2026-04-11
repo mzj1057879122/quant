@@ -2,7 +2,7 @@ from datetime import date as DateType
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import getDb
@@ -22,15 +22,8 @@ def getDailyPrediction(
     target_date = DateType.fromisoformat(date) if date else DateType.today()
 
     rows = (
-        db.query(BacktestResult, Watchlist, DailyQuote)
+        db.query(BacktestResult, Watchlist)
         .outerjoin(Watchlist, Watchlist.stockCode == BacktestResult.stockCode)
-        .outerjoin(
-            DailyQuote,
-            and_(
-                DailyQuote.stockCode == BacktestResult.stockCode,
-                DailyQuote.tradeDate == target_date,
-            ),
-        )
         .filter(
             BacktestResult.predictDate == target_date,
             BacktestResult.version == "v3_auto",
@@ -38,13 +31,33 @@ def getDailyPrediction(
         .all()
     )
 
+    # 批量查各股最新行情（不依赖日期，避免周末无数据）
+    stockCodes = [br.stockCode for br, _ in rows]
+    latestQuoteMap: dict = {}
+    if stockCodes:
+        subq = (
+            db.query(DailyQuote.stockCode, func.max(DailyQuote.tradeDate).label("maxDate"))
+            .filter(DailyQuote.stockCode.in_(stockCodes))
+            .group_by(DailyQuote.stockCode)
+            .subquery()
+        )
+        latestQuotes = (
+            db.query(DailyQuote)
+            .join(subq, (DailyQuote.stockCode == subq.c.stockCode) & (DailyQuote.tradeDate == subq.c.maxDate))
+            .all()
+        )
+        for dq in latestQuotes:
+            latestQuoteMap[dq.stockCode] = dq
+
     items = []
     bullish = 0
     bearish = 0
     neutral = 0
 
-    for br, wl, dq in rows:
+    for br, wl in rows:
+        dq = latestQuoteMap.get(br.stockCode)
         latestClose = float(dq.closePrice) if dq else None
+        latestDate = dq.tradeDate.isoformat() if dq else None
         anchorPrice = float(wl.anchorPrice) if wl and wl.anchorPrice else None
 
         changeFromAnchor = None
@@ -68,6 +81,7 @@ def getDailyPrediction(
             "technicalSignal": br.technicalSignal,
             "anchorPrice": anchorPrice,
             "latestClose": latestClose,
+            "latestDate": latestDate,
             "changeFromAnchor": changeFromAnchor,
             "anchorDate": wl.anchorDate.isoformat() if wl and wl.anchorDate else None,
             "status": wl.status if wl else None,
