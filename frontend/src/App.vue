@@ -52,6 +52,11 @@ onMounted(() => {
           <template #title>预测看板</template>
         </el-menu-item>
 
+        <el-menu-item index="/daily-prediction">
+          <el-icon><TrendCharts /></el-icon>
+          <template #title>今日预测</template>
+        </el-menu-item>
+
         <el-menu-item index="/signals">
           <el-icon><Bell /></el-icon>
           <template #title>

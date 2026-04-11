@@ -44,6 +44,12 @@ const routes = [
     meta: { title: '预测看板' },
   },
   {
+    path: '/daily-prediction',
+    name: 'DailyPrediction',
+    component: () => import('../views/DailyPrediction.vue'),
+    meta: { title: '今日预测' },
+  },
+  {
     path: '/brief',
     name: 'MorningBrief',
     component: () => import('../views/MorningBrief.vue'),
