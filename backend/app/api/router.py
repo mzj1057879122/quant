@@ -12,6 +12,7 @@ from app.api.strong import router as strongRouter
 from app.api.watchlist import router as watchlistRouter
 from app.api.backtest import router as backtestRouter
 from app.api.morning_brief import router as briefRouter
+from app.api.strategy import router as strategyRouter
 
 apiRouter = APIRouter(prefix="/api/v1")
 
@@ -27,3 +28,4 @@ apiRouter.include_router(strongRouter)
 apiRouter.include_router(watchlistRouter)
 apiRouter.include_router(backtestRouter)
 apiRouter.include_router(briefRouter)
+apiRouter.include_router(strategyRouter)

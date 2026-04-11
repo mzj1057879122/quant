@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getAllConfigs, updateConfig } from '../api/userConfig'
 import { runTask, getTaskStatus } from '../api/system'
+import { getStrategyRules, updateStrategyRule } from '../api/strategy'
 
 const loading = ref(false)
 const configs = ref({})
@@ -125,7 +126,56 @@ async function handleTestNotify() {
   }
 }
 
-onMounted(loadConfigs)
+// 策略规则管理
+const strategyRules = ref([])
+const strategyLoading = ref(false)
+const editDialogVisible = ref(false)
+const editingRule = ref(null)
+const editingValue = ref(0)
+const editSubmitting = ref(false)
+
+async function loadStrategyRules() {
+  strategyLoading.value = true
+  try {
+    const res = await getStrategyRules()
+    strategyRules.value = res.items || []
+  } catch (e) {
+    // 静默
+  } finally {
+    strategyLoading.value = false
+  }
+}
+
+function openEditDialog(rule) {
+  editingRule.value = rule
+  editingValue.value = rule.ruleValue
+  editDialogVisible.value = true
+}
+
+async function submitRuleEdit() {
+  if (!editingRule.value) return
+  editSubmitting.value = true
+  try {
+    await updateStrategyRule(editingRule.value.ruleKey, editingValue.value)
+    ElMessage.success('规则已更新，下次预测时生效')
+    editDialogVisible.value = false
+    await loadStrategyRules()
+  } catch (e) {
+    ElMessage.error('更新失败')
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
+function formatDate(val) {
+  if (!val) return '-'
+  return val.replace('T', ' ').substring(0, 19)
+}
+
+onMounted(() => {
+  loadConfigs()
+  loadStrategyRules()
+})
 </script>
 
 <template>
@@ -239,5 +289,52 @@ onMounted(loadConfigs)
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 策略规则管理 -->
+    <el-card v-loading="strategyLoading" style="margin-top: 20px">
+      <template #header>
+        <span style="font-weight: 500">策略规则管理</span>
+      </template>
+      <el-table :data="strategyRules" border size="small" style="width: 100%">
+        <el-table-column prop="ruleKey" label="规则名" min-width="180" />
+        <el-table-column prop="ruleDesc" label="说明" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="ruleValue" label="当前值" width="110" align="right">
+          <template #default="{ row }">
+            <span style="font-weight: 500">{{ row.ruleValue }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="category" label="分类" width="130" />
+        <el-table-column label="最后更新" width="160">
+          <template #default="{ row }">
+            {{ formatDate(row.updatedAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="openEditDialog(row)">编辑</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 编辑规则弹窗 -->
+    <el-dialog v-model="editDialogVisible" title="编辑规则" width="420px" :close-on-click-modal="false">
+      <template v-if="editingRule">
+        <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
+          <el-descriptions-item label="规则名">{{ editingRule.ruleKey }}</el-descriptions-item>
+          <el-descriptions-item label="说明">{{ editingRule.ruleDesc }}</el-descriptions-item>
+          <el-descriptions-item label="分类">{{ editingRule.category }}</el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="80px">
+          <el-form-item label="数值">
+            <el-input-number v-model="editingValue" :precision="4" :step="0.01" style="width: 200px" />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSubmitting" @click="submitRuleEdit">确认</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

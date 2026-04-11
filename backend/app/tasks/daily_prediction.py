@@ -8,6 +8,7 @@ from app.database import SessionLocal
 from app.models.watchlist import Watchlist
 from app.models.daily_quote import DailyQuote
 from app.models.backtest_result import BacktestResult
+from app.services import strategy_service
 from app.utils.date_helper import isTradingDay
 from app.utils.logger import setupLogger
 
@@ -38,7 +39,7 @@ def _calcAvgVolume(quotes: list[DailyQuote], n: int = 5) -> Decimal | None:
     return Decimal(total) / n
 
 
-def _predictStock(db: Session, stock: Watchlist, today: date) -> dict | None:
+def _predictStock(db: Session, stock: Watchlist, today: date, rules: dict) -> dict | None:
     """对单只股票执行技术打分，返回预测结果字典"""
     quotes = _getRecentQuotes(db, stock.stockCode, 42)
     if len(quotes) < 22:
@@ -52,7 +53,8 @@ def _predictStock(db: Session, stock: Watchlist, today: date) -> dict | None:
 
     prevQuotes = quotes[:-1]  # 不含今日
     avgVol5 = _calcAvgVolume(quotes, 5)
-    high20 = max(q.highPrice for q in prevQuotes[-20:]) if len(prevQuotes) >= 20 else None
+    breakoutDays = int(rules["breakout_days"])
+    high20 = max(q.highPrice for q in prevQuotes[-breakoutDays:]) if len(prevQuotes) >= breakoutDays else None
 
     signals: list[str] = []
     positiveCount = 0
@@ -61,13 +63,13 @@ def _predictStock(db: Session, stock: Watchlist, today: date) -> dict | None:
     # --- 规则1：启动信号检测 ---
     launchSignal = False
     if avgVol5 and high20:
-        volOk = todayQ.volume >= avgVol5 * Decimal("1.8")
+        volOk = todayQ.volume >= avgVol5 * rules["volume_ratio_min"]
         changePct = todayQ.changePct or Decimal("0")
-        gainOk = changePct >= Decimal("5")
+        gainOk = changePct >= rules["gain_pct_min"]
         breakoutOk = todayQ.closePrice > high20
         if volOk and gainOk and breakoutOk:
             launchSignal = True
-            signals.append("启动信号：放量+涨幅+突破20日高")
+            signals.append(f"启动信号：放量+涨幅+突破{breakoutDays}日高")
             positiveCount += 1
 
     # --- 规则2：趋势判断（基于锚位）---
@@ -85,7 +87,7 @@ def _predictStock(db: Session, stock: Watchlist, today: date) -> dict | None:
         yesterdayQ = prevQuotes[-1]
         # 缩量收阳：洗盘加分
         if (
-            todayQ.volume < yesterdayQ.volume * Decimal("0.5")
+            todayQ.volume < yesterdayQ.volume * rules["shrink_ratio"]
             and todayQ.closePrice > todayQ.openPrice
         ):
             signals.append("缩量收阳：洗盘形态")
@@ -95,7 +97,7 @@ def _predictStock(db: Session, stock: Watchlist, today: date) -> dict | None:
         bodyHigh = max(todayQ.openPrice, todayQ.closePrice)
         upperShadowRatio = upperShadow / bodyHigh if bodyHigh > 0 else Decimal("0")
         if (
-            todayQ.volume > avgVol5 * 3
+            todayQ.volume > avgVol5 * rules["extreme_vol_ratio"]
             and todayQ.closePrice < todayQ.openPrice
             and upperShadowRatio >= Decimal("0.02")
         ):
@@ -114,10 +116,12 @@ def _predictStock(db: Session, stock: Watchlist, today: date) -> dict | None:
     else:
         prediction = "中性"
 
+    confHigh = int(rules["conf_high_signals"])
+    confMid = int(rules["conf_mid_signals"])
     totalSignals = positiveCount + negativeCount
-    if positiveCount >= 2 or negativeCount >= 2:
+    if positiveCount >= confHigh or negativeCount >= confHigh:
         confidence = "高"
-    elif totalSignals >= 1:
+    elif totalSignals >= confMid:
         confidence = "中"
     else:
         confidence = "低"
@@ -151,10 +155,12 @@ def runDailyPrediction() -> None:
             logger.info("watchlist 无 watching 股票，跳过预测")
             return
 
+        rules = strategy_service.getRules(db)
+
         saved = 0
         for stock in stocks:
             try:
-                result = _predictStock(db, stock, today)
+                result = _predictStock(db, stock, today, rules)
                 if result is None:
                     continue
 
