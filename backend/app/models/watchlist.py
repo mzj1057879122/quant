@@ -35,6 +35,9 @@ class Watchlist(Base):
     confidence: Mapped[str | None] = mapped_column(
         "confidence", String(10), nullable=True, comment="高/中/低"
     )
+    tier: Mapped[str | None] = mapped_column(
+        "tier", String(1), nullable=True, comment="分级：A/B/C"
+    )
     createdAt: Mapped[datetime] = mapped_column(
         "created_at", DateTime, nullable=False, default=datetime.now
     )

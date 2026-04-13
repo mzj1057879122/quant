@@ -25,6 +25,7 @@ class WatchlistItem(BaseModel):
     confidence: str | None
     latestPrice: float | None
     anchorDistPct: float | None  # 距锚位%
+    tier: str | None = None  # A/B/C 分级
     createdAt: datetime
     updatedAt: datetime
 
@@ -69,6 +70,7 @@ def _buildItem(w: Watchlist, latestPrice: float | None) -> dict:
         "confidence": w.confidence,
         "latestPrice": latestPrice,
         "anchorDistPct": anchorDistPct,
+        "tier": w.tier,
         "createdAt": w.createdAt,
         "updatedAt": w.updatedAt,
     }
