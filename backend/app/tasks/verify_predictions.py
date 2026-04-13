@@ -5,7 +5,7 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.models.backtest_result import BacktestResult
 from app.models.daily_quote import DailyQuote
-from app.utils.date_helper import isTradingDay
+from app.utils.date_helper import isTradingDay, getPreviousTradingDay
 from app.utils.logger import setupLogger
 
 logger = setupLogger("task_verify_predictions")
@@ -18,7 +18,7 @@ def runVerifyPredictions() -> None:
         logger.info(f"非交易日跳过 date={today}")
         return
 
-    yesterday = today - timedelta(days=1)
+    yesterday = getPreviousTradingDay(today)
 
     db = SessionLocal()
     try:

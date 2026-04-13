@@ -22,6 +22,12 @@ class Stock(Base):
     industry: Mapped[str | None] = mapped_column(
         "industry", String(50), nullable=True, comment="所属行业"
     )
+    tier: Mapped[str] = mapped_column(
+        "tier", String(1), nullable=False, default="B", comment="股票分级 A/B/C"
+    )
+    sector: Mapped[str | None] = mapped_column(
+        "sector", String(100), nullable=True, comment="所属板块（来自涨停板块数据最频繁出现的板块名）"
+    )
     isActive: Mapped[int] = mapped_column(
         "is_active", SmallInteger, nullable=False, default=1, comment="是否活跃"
     )

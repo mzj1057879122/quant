@@ -8,6 +8,7 @@ class StockBase(BaseModel):
     stockName: str
     market: str
     industry: str | None = None
+    tier: str = "B"
 
 
 class StockCreate(StockBase):

@@ -48,6 +48,31 @@ def getLatest(stockCode: str, db: Session = Depends(getDb)):
     }
 
 
+@router.get("/{stockCode}/weekly")
+def getWeeklyQuotes(
+    stockCode: str,
+    limit: int = Query(52, ge=1, le=260),
+    db: Session = Depends(getDb),
+):
+    """获取某只股票最近N周的周线数据（含EXPMA5/13/34）"""
+    items = quote_service.getWeeklyQuotes(db, stockCode, limit)
+    result = []
+    for w in items:
+        result.append({
+            "stockCode": w.stockCode,
+            "weekStart": w.weekStart,
+            "openPrice": w.openPrice,
+            "closePrice": w.closePrice,
+            "highPrice": w.highPrice,
+            "lowPrice": w.lowPrice,
+            "volume": w.volume,
+            "expma5": w.expma5,
+            "expma13": w.expma13,
+            "expma34": w.expma34,
+        })
+    return {"stockCode": stockCode, "total": len(result), "items": result}
+
+
 @router.post("/fetch")
 def fetchQuotes(
     stockCode: str | None = Query(None, description="指定股票代码，为空则拉取全部关注"),

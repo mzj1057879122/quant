@@ -265,6 +265,77 @@ def getQuotesByStockCode(
     return query.order_by(DailyQuote.tradeDate.desc()).limit(limit).all()
 
 
+def calcExpmaForStock(db: Session, stockCode: str) -> int:
+    """
+    计算并更新某只股票所有历史记录的 EXPMA(5/13/34/89) 和 MACD(DIF/DEA/柱)。
+    EMA 公式：EMA(t) = close(t) * k + EMA(t-1) * (1-k)，k = 2/(n+1)
+    MACD：EMA12/EMA26 算 DIF，EMA9(DIF) 算 DEA，柱=(DIF-DEA)*2
+    初始值：EMA取第一条收盘价，DEA取第一条DIF值。
+    """
+    rows = (
+        db.query(DailyQuote)
+        .filter(DailyQuote.stockCode == stockCode)
+        .order_by(DailyQuote.tradeDate.asc())
+        .all()
+    )
+    if not rows:
+        return 0
+
+    periods = [5, 13, 34, 89]
+    k = {n: 2 / (n + 1) for n in periods}
+    ema = {}
+
+    # MACD 参数
+    k12 = 2 / 13
+    k26 = 2 / 27
+    k9 = 2 / 10
+    ema12 = ema26 = dea = 0.0
+
+    for i, row in enumerate(rows):
+        close = float(row.closePrice)
+        if i == 0:
+            for n in periods:
+                ema[n] = close
+            ema12 = close
+            ema26 = close
+            dif = 0.0
+            dea = 0.0
+        else:
+            for n in periods:
+                ema[n] = close * k[n] + ema[n] * (1 - k[n])
+            ema12 = close * k12 + ema12 * (1 - k12)
+            ema26 = close * k26 + ema26 * (1 - k26)
+            dif = ema12 - ema26
+            dea = dif * k9 + dea * (1 - k9)
+
+        row.expma5 = round(ema[5], 3)
+        row.expma13 = round(ema[13], 3)
+        row.expma34 = round(ema[34], 3)
+        row.expma89 = round(ema[89], 3)
+        row.macdDiff = round(dif, 4)
+        row.macdDea = round(dea, 4)
+        row.macdBar = round((dif - dea) * 2, 4)
+
+    db.commit()
+    return len(rows)
+
+
+def calcExpmaForAll(db: Session) -> dict:
+    """遍历所有有数据的股票，批量计算 EXPMA"""
+    from sqlalchemy import distinct
+    stocks = [r[0] for r in db.query(distinct(DailyQuote.stockCode)).all()]
+    success, failed = 0, 0
+    for stockCode in stocks:
+        try:
+            calcExpmaForStock(db, stockCode)
+            success += 1
+        except Exception as e:
+            failed += 1
+            logger.error(f"EXPMA计算失败 stock_code={stockCode} 错误={e}", exc_info=True)
+    logger.info(f"EXPMA批量计算完成 成功={success} 失败={failed}")
+    return {"success": success, "failed": failed}
+
+
 def getLatestQuote(db: Session, stockCode: str) -> DailyQuote | None:
     """获取最新一条行情"""
     return (
@@ -272,4 +343,119 @@ def getLatestQuote(db: Session, stockCode: str) -> DailyQuote | None:
         .filter(DailyQuote.stockCode == stockCode)
         .order_by(DailyQuote.tradeDate.desc())
         .first()
+    )
+
+
+def calcWeeklyStats(db: Session, stockCode: str) -> int:
+    """
+    计算某只股票的周线数据并存入 weekly_quote 表。
+    按自然周（周一到周五）聚合：open=周一开盘，close=周五收盘，high=周内最高，low=周内最低，volume=周内累计。
+    同时计算周线 EMA(5/13/34)，upsert（已存在则更新）。
+    """
+    from datetime import timedelta
+    from decimal import Decimal
+    from app.models.weekly_quote import WeeklyQuote
+
+    rows = (
+        db.query(DailyQuote)
+        .filter(DailyQuote.stockCode == stockCode)
+        .order_by(DailyQuote.tradeDate.asc())
+        .all()
+    )
+    if not rows:
+        return 0
+
+    # 按自然周分组：以周一日期为 key
+    weeks: dict = {}
+    for row in rows:
+        # weekday(): 周一=0, ..., 周日=6
+        monday = row.tradeDate - timedelta(days=row.tradeDate.weekday())
+        if monday not in weeks:
+            weeks[monday] = []
+        weeks[monday].append(row)
+
+    # 按周一日期排序，聚合各周
+    periods = [5, 13, 34]
+    k = {n: 2 / (n + 1) for n in periods}
+    ema: dict = {}
+    initialized = False
+
+    upsertCount = 0
+    for monday in sorted(weeks.keys()):
+        dayRows = sorted(weeks[monday], key=lambda r: r.tradeDate)
+        openPrice = float(dayRows[0].openPrice)
+        closePrice = float(dayRows[-1].closePrice)
+        highPrice = max(float(r.highPrice) for r in dayRows)
+        lowPrice = min(float(r.lowPrice) for r in dayRows)
+        volume = sum(r.volume for r in dayRows)
+
+        # EMA 迭代
+        if not initialized:
+            for n in periods:
+                ema[n] = closePrice
+            initialized = True
+        else:
+            for n in periods:
+                ema[n] = closePrice * k[n] + ema[n] * (1 - k[n])
+
+        existing = (
+            db.query(WeeklyQuote)
+            .filter(WeeklyQuote.stockCode == stockCode, WeeklyQuote.weekStart == monday)
+            .first()
+        )
+        if existing:
+            existing.openPrice = Decimal(str(round(openPrice, 3)))
+            existing.closePrice = Decimal(str(round(closePrice, 3)))
+            existing.highPrice = Decimal(str(round(highPrice, 3)))
+            existing.lowPrice = Decimal(str(round(lowPrice, 3)))
+            existing.volume = volume
+            existing.expma5 = Decimal(str(round(ema[5], 3)))
+            existing.expma13 = Decimal(str(round(ema[13], 3)))
+            existing.expma34 = Decimal(str(round(ema[34], 3)))
+        else:
+            wq = WeeklyQuote(
+                stockCode=stockCode,
+                weekStart=monday,
+                openPrice=Decimal(str(round(openPrice, 3))),
+                closePrice=Decimal(str(round(closePrice, 3))),
+                highPrice=Decimal(str(round(highPrice, 3))),
+                lowPrice=Decimal(str(round(lowPrice, 3))),
+                volume=volume,
+                expma5=Decimal(str(round(ema[5], 3))),
+                expma13=Decimal(str(round(ema[13], 3))),
+                expma34=Decimal(str(round(ema[34], 3))),
+            )
+            db.add(wq)
+        upsertCount += 1
+
+    db.commit()
+    logger.info(f"周线计算完成 stock_code={stockCode} weeks={upsertCount}")
+    return upsertCount
+
+
+def calcWeeklyForAll(db: Session) -> dict:
+    """遍历所有有数据的股票，批量计算周线数据"""
+    from sqlalchemy import distinct
+    stocks = [r[0] for r in db.query(distinct(DailyQuote.stockCode)).all()]
+    success, failed = 0, 0
+    for stockCode in stocks:
+        try:
+            calcWeeklyStats(db, stockCode)
+            success += 1
+        except Exception as e:
+            failed += 1
+            logger.error(f"周线计算失败 stock_code={stockCode} 错误={e}", exc_info=True)
+    logger.info(f"周线批量计算完成 成功={success} 失败={failed}")
+    return {"success": success, "failed": failed}
+
+
+def getWeeklyQuotes(db: Session, stockCode: str, limit: int = 52):
+    """获取某只股票最近N周的周线数据"""
+    from app.models.weekly_quote import WeeklyQuote
+    return (
+        db.query(WeeklyQuote)
+        .filter(WeeklyQuote.stockCode == stockCode)
+        .order_by(WeeklyQuote.weekStart.desc())
+        .limit(limit)
+        .all()
     )

@@ -98,13 +98,13 @@ def _fetchPageData(date_str: str) -> dict:
             },
             {
                 "name": "Hm_lvt_58aa18061df7855800f2a1b32d6da7f4",
-                "value": "1774598692,1774855487,1775547199,1775723406",
+                "value": "1774855487,1775547199,1775723406,1776070948",
                 "domain": ".jiuyangongshe.com",
                 "path": "/",
             },
             {
                 "name": "Hm_lpvt_58aa18061df7855800f2a1b32d6da7f4",
-                "value": "1775909707",
+                "value": "1776070984",
                 "domain": ".jiuyangongshe.com",
                 "path": "/",
             },
@@ -406,6 +406,80 @@ def runFetchLimitUp(date_str: str = None) -> dict:
     except Exception as e:
         logger.error(f"采集涨停板块数据异常 date={date_str} 错误={e}", exc_info=True)
         return {"success": False, "date": date_str, "plates": 0, "stocks": 0, "error": str(e)}
+
+
+def backfillLimitUpHistory(startDate: str, endDate: str) -> dict:
+    """
+    批量补采历史涨停板块数据
+
+    Args:
+        startDate: 开始日期 '2025-01-01'
+        endDate:   结束日期 '2025-12-31'
+
+    Returns:
+        {'success': N, 'failed': N, 'skipped': N, 'failedDates': [...]}
+    """
+    import time
+    import random
+    from datetime import date as date_type, timedelta
+
+    # 生成 startDate 到 endDate 之间所有交易日（跳过周六、周日）
+    start = date_type.fromisoformat(startDate)
+    end = date_type.fromisoformat(endDate)
+    allDates = []
+    cur = start
+    while cur <= end:
+        if cur.weekday() < 5:  # 0=周一 … 4=周五
+            allDates.append(cur.isoformat())
+        cur += timedelta(days=1)
+
+    # 查询数据库中已有的交易日（避免重复采集）
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text("SELECT DISTINCT DATE_FORMAT(trade_date, '%Y-%m-%d') FROM limit_up_plate")
+        ).fetchall()
+        existingDates = {r[0] for r in rows}
+    finally:
+        db.close()
+
+    missingDates = [d for d in allDates if d not in existingDates]
+    logger.info(
+        f"补采任务启动 startDate={startDate} endDate={endDate} "
+        f"交易日总数={len(allDates)} 已有={len(existingDates)} 待补={len(missingDates)}"
+    )
+
+    successCount = 0
+    failedDates = []
+
+    for idx, dateStr in enumerate(missingDates):
+        logger.info(f"[{idx+1}/{len(missingDates)}] 补采 {dateStr}")
+        try:
+            result = runFetchLimitUp(dateStr)
+            if result.get("success"):
+                successCount += 1
+                logger.info(
+                    f"补采成功 date={dateStr} plates={result.get('plates')} stocks={result.get('stocks')}"
+                )
+            else:
+                failedDates.append(dateStr)
+                logger.error(f"补采失败 date={dateStr} error={result.get('error')}")
+        except Exception as e:
+            failedDates.append(dateStr)
+            logger.error(f"补采异常 date={dateStr} 错误={e}", exc_info=True)
+
+        # 每次成功后随机等待 3-6 秒防封
+        sleepSec = random.uniform(3, 6)
+        time.sleep(sleepSec)
+
+    summary = {
+        "success": successCount,
+        "failed": len(failedDates),
+        "skipped": len(allDates) - len(missingDates),
+        "failedDates": failedDates,
+    }
+    logger.info(f"补采任务完成 {summary}")
+    return summary
 
 
 if __name__ == "__main__":

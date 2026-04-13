@@ -81,12 +81,39 @@ def initScheduler() -> None:
         replace_existing=True,
     )
 
-    # 每个交易日16:00（北京时间，UTC+8，即 UTC 08:00）采集涨停板块数据
+    # 每个交易日16:05（北京时间，UTC+8，即 UTC 08:05）采集涨停板块数据
     scheduler.add_job(
         _runFetchLimitUp,
-        trigger=CronTrigger(hour=8, minute=0, day_of_week="mon-fri"),
+        trigger=CronTrigger(hour=8, minute=5, day_of_week="mon-fri"),
         id="fetch_limit_up",
         name="采集涨停板块",
+        replace_existing=True,
+    )
+
+    # 每个交易日18:15（北京时间，UTC+8，即 UTC 10:15）计算 EXPMA
+    scheduler.add_job(
+        _runCalcExpma,
+        trigger=CronTrigger(hour=10, minute=15, day_of_week="mon-fri"),
+        id="calc_expma",
+        name="计算EXPMA均线",
+        replace_existing=True,
+    )
+
+    # 每周五18:30（北京时间，UTC+8，即 UTC 10:30）计算所有股票周线数据
+    scheduler.add_job(
+        _runCalcWeekly,
+        trigger=CronTrigger(hour=10, minute=30, day_of_week="fri"),
+        id="calc_weekly",
+        name="计算周线数据",
+        replace_existing=True,
+    )
+
+    # 每周日UTC 22:00（北京周一 06:00）执行量化回测
+    scheduler.add_job(
+        _runQuantBacktest,
+        trigger=CronTrigger(hour=22, minute=0, day_of_week="sun"),
+        id="quant_backtest",
+        name="量化策略回测",
         replace_existing=True,
     )
 
@@ -138,9 +165,47 @@ def _runSyncStockList() -> None:
         db.close()
 
 
+def _runCalcExpma() -> None:
+    """计算EXPMA均线（定时任务包装）"""
+    from app.database import SessionLocal
+    from app.services.quote_service import calcExpmaForAll
+
+    db = SessionLocal()
+    try:
+        calcExpmaForAll(db)
+    except Exception as e:
+        logger.error(f"EXPMA计算任务异常 错误={e}", exc_info=True)
+    finally:
+        db.close()
+
+
+def _runQuantBacktest() -> None:
+    """量化回测（定时任务包装）"""
+    from app.tasks.run_backtest import runQuantBacktest
+
+    try:
+        runQuantBacktest()
+    except Exception as e:
+        logger.error(f"量化回测任务异常 错误={e}", exc_info=True)
+
+
 def _runFetchLimitUp() -> None:
     """采集涨停板块数据（定时任务包装）"""
     try:
         runFetchLimitUp()
     except Exception as e:
         logger.error(f"采集涨停板块任务异常 错误={e}", exc_info=True)
+
+
+def _runCalcWeekly() -> None:
+    """计算周线数据（定时任务包装）"""
+    from app.database import SessionLocal
+    from app.services.quote_service import calcWeeklyForAll
+
+    db = SessionLocal()
+    try:
+        calcWeeklyForAll(db)
+    except Exception as e:
+        logger.error(f"周线计算任务异常 错误={e}", exc_info=True)
+    finally:
+        db.close()

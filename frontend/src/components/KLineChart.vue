@@ -30,6 +30,20 @@ function renderChart() {
   ])
   const volumes = sortedQuotes.map(q => q.volume)
 
+  const expma5Data = sortedQuotes.map(q => q.expma5 != null ? parseFloat(q.expma5) : null)
+  const expma13Data = sortedQuotes.map(q => q.expma13 != null ? parseFloat(q.expma13) : null)
+  const expma34Data = sortedQuotes.map(q => q.expma34 != null ? parseFloat(q.expma34) : null)
+  const expma89Data = sortedQuotes.map(q => q.expma89 != null ? parseFloat(q.expma89) : null)
+
+  const macdDiffData = sortedQuotes.map(q => q.macdDiff != null ? parseFloat(q.macdDiff) : null)
+  const macdDeaData = sortedQuotes.map(q => q.macdDea != null ? parseFloat(q.macdDea) : null)
+  const macdBarData = sortedQuotes.map((q, idx) => {
+    if (q.macdBar == null) return null
+    const val = parseFloat(q.macdBar)
+    // 红涨绿跌：bar>0 红色，bar<=0 绿色
+    return { value: val, itemStyle: { color: val >= 0 ? '#ef5350' : '#26a69a' } }
+  })
+
   // 前高/锚位标注线
   const markLines = props.previousHighs
     .filter(ph => ph.status === 'active')
@@ -85,8 +99,9 @@ function renderChart() {
       axisPointer: { type: 'cross' },
     },
     grid: [
-      { left: '8%', right: '4%', top: '8%', height: '55%' },
-      { left: '8%', right: '4%', top: '70%', height: '20%' },
+      { left: '8%', right: '4%', top: '4%', height: '48%' },
+      { left: '8%', right: '4%', top: '57%', height: '14%' },
+      { left: '8%', right: '4%', top: '76%', height: '16%' },
     ],
     xAxis: [
       {
@@ -94,21 +109,31 @@ function renderChart() {
         data: dates,
         gridIndex: 0,
         axisLabel: { show: false },
+        axisLine: { onZero: false },
       },
       {
         type: 'category',
         data: dates,
         gridIndex: 1,
+        axisLabel: { show: false },
+        axisLine: { onZero: false },
+      },
+      {
+        type: 'category',
+        data: dates,
+        gridIndex: 2,
         axisLabel: { fontSize: 10 },
+        axisLine: { onZero: false },
       },
     ],
     yAxis: [
       { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#f0f0f0' } } },
       { scale: true, gridIndex: 1, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+      { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: '#f0f0f0' } } },
     ],
     dataZoom: [
-      { type: 'inside', xAxisIndex: [0, 1], start: 60, end: 100 },
-      { type: 'slider', xAxisIndex: [0, 1], start: 60, end: 100, top: '94%' },
+      { type: 'inside', xAxisIndex: [0, 1, 2], start: 60, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1, 2], start: 60, end: 100, bottom: '1%' },
     ],
     series: [
       {
@@ -133,6 +158,50 @@ function renderChart() {
         },
       },
       {
+        name: 'EXPMA5',
+        type: 'line',
+        data: expma5Data,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#FFD700', width: 1 },
+        itemStyle: { color: '#FFD700' },
+      },
+      {
+        name: 'EXPMA13',
+        type: 'line',
+        data: expma13Data,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#FF8C00', width: 1 },
+        itemStyle: { color: '#FF8C00' },
+      },
+      {
+        name: 'EXPMA34',
+        type: 'line',
+        data: expma34Data,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#9370DB', width: 1 },
+        itemStyle: { color: '#9370DB' },
+      },
+      {
+        name: 'EXPMA89',
+        type: 'line',
+        data: expma89Data,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: '#FF4500', width: 2 },
+        itemStyle: { color: '#FF4500' },
+      },
+      {
         name: '成交量',
         type: 'bar',
         data: volumes,
@@ -144,6 +213,35 @@ function renderChart() {
             return ohlc[idx][1] >= ohlc[idx][0] ? '#ef5350' : '#26a69a'
           },
         },
+      },
+      {
+        name: 'DIF',
+        type: 'line',
+        data: macdDiffData,
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        smooth: false,
+        symbol: 'none',
+        lineStyle: { color: '#ffffff', width: 1 },
+        itemStyle: { color: '#ffffff' },
+      },
+      {
+        name: 'DEA',
+        type: 'line',
+        data: macdDeaData,
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        smooth: false,
+        symbol: 'none',
+        lineStyle: { color: '#FFD700', width: 1 },
+        itemStyle: { color: '#FFD700' },
+      },
+      {
+        name: 'MACD',
+        type: 'bar',
+        data: macdBarData,
+        xAxisIndex: 2,
+        yAxisIndex: 2,
       },
     ],
   }

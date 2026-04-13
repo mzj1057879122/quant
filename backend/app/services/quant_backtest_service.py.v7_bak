@@ -1,25 +1,22 @@
 """
 量化回测服务
 
-回测规则（v9 anchor_range）：在 v8 anchor_cap 基础上新增进场距锚下限过滤（过滤假突破）：
+回测规则（v7 plate）：在 v6 tiered 基础上新增板块热度过滤：
 
 进场增加：
   条件6：板块热度分 >= 0.5（板块当日涨停家数不能比昨日减少超过50%）
-  条件7：进场价 <= 锚位 × 1.15（距锚不超过15%，过滤追高）
-  条件8：进场价 >= 锚位 × 1.05（距锚不低于5%，过滤假突破/贴近低点收盘）
 
 出场增加（高优先级）：
   plate_retreat：持仓中若 getPlateHotScore < 0.3 AND 成交量 >= 均量×1.5 → 出场
 
 A 级（强概念，宽松持仓）：
-  - 硬止损兜底：收盘跌超入场价20% → 立即出场（新增）
+  - 不使用固定比例止损
   - 止损条件：放量(>=1.5x均量)跌破锚位 → 出场
   - 持仓上限：60天（不是30/45天）
 
 B 级（标准，v5规则）：
   - gap_up_reversal（量>=2.5x + 跳空>2% + 被砸）→ 当日出场
   - 放量(>=1.5x)跌破锚位 → 出场
-  - 固定比例止损 13%（原12%，放宽以减少过早止损）
   - 持仓30天亏损 → 出场，45天强制出场
 
 C 级（弱势，严格止损）：
@@ -53,7 +50,7 @@ GAP_UP_OPEN_MIN = 1.02  # 跳空反转：开盘高于前日收盘最小比例
 GAP_UP_ENTRY_MAX = 1.05 # 进场过滤：开盘不追超5%的跳空
 
 # B 级参数（标准）
-B_MAX_LOSS_PCT = 0.13    # v8: 放宽至13%，减少过早止损
+B_MAX_LOSS_PCT = 0.12
 B_MAX_HOLD_DAYS_LOSS = 30
 B_MAX_HOLD_DAYS = 45
 
@@ -289,13 +286,6 @@ def backtestOneTicker(
 
             if tier == "A":
                 # A级：宽松持仓
-                # 优先级0：硬止损兜底 -20%（v8新增）
-                if closePrice < entryInfo["entryPrice"] * 0.80:
-                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
-                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "hard_stop", holdDays, returnPct))
-                    inPosition = False
-                    continue
-
                 # 优先级1：放量跌破锚位止损
                 if closePrice < entryInfo["anchorPrice"] and vol10 > 0 and q.volume >= vol10 * VOL_MULT_STOP:
                     returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
@@ -422,16 +412,7 @@ def backtestOneTicker(
                 if hotScore < 0.5:
                     continue
 
-            # 条件7：进场价不超过锚位15%（v8新增，过滤追高）
-            anchor = float(q.lowPrice)
-            if float(q.closePrice) > anchor * 1.15:
-                continue
-
-            # 条件8：进场价不低于锚位5%（v9新增，过滤假突破/收盘贴近当日低点）
-            if float(q.closePrice) < anchor * 1.05:
-                continue
-
-            # 八条同时满足 → 启动日
+            # 六条同时满足 → 启动日
             entryInfo = {
                 "stockCode": q.stockCode,
                 "signalDate": q.tradeDate,

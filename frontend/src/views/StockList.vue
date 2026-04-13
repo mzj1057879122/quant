@@ -16,6 +16,7 @@ const loading = ref(false)
 const syncLoading = ref(false)
 const batchInput = ref('')
 const batchDialogVisible = ref(false)
+const selectedTier = ref('')
 
 async function loadStocks() {
   loading.value = true
@@ -24,6 +25,7 @@ async function loadStocks() {
       keyword: keyword.value || undefined,
       page: currentPage.value,
       pageSize: pageSize.value,
+      tier: selectedTier.value || undefined,
     })
     stockList.value = res.items || []
     total.value = res.total || 0
@@ -114,6 +116,18 @@ function handlePageChange(page) {
   loadStocks()
 }
 
+function handleTierFilter(tier) {
+  selectedTier.value = tier
+  currentPage.value = 1
+  loadStocks()
+}
+
+function tierTag(tier) {
+  if (tier === 'A') return { label: '🔥A级', type: 'success' }
+  if (tier === 'C') return { label: 'C级', type: 'info' }
+  return { label: 'B级', type: 'primary' }
+}
+
 onMounted(() => {
   loadStocks()
   loadWatchList()
@@ -149,6 +163,31 @@ onMounted(() => {
           已关注 {{ watchList.length }} 只股票
         </span>
       </div>
+
+      <!-- Tier 筛选按钮 -->
+      <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center">
+        <span style="color: #606266; font-size: 13px">分级筛选：</span>
+        <el-button
+          :type="selectedTier === '' ? 'primary' : 'default'"
+          size="small"
+          @click="handleTierFilter('')"
+        >全部</el-button>
+        <el-button
+          :type="selectedTier === 'A' ? 'success' : 'default'"
+          size="small"
+          @click="handleTierFilter('A')"
+        >🔥 A级</el-button>
+        <el-button
+          :type="selectedTier === 'B' ? 'primary' : 'default'"
+          size="small"
+          @click="handleTierFilter('B')"
+        >B级</el-button>
+        <el-button
+          :type="selectedTier === 'C' ? 'info' : 'default'"
+          size="small"
+          @click="handleTierFilter('C')"
+        >C级</el-button>
+      </div>
     </el-card>
 
     <!-- 股票表格 -->
@@ -156,6 +195,13 @@ onMounted(() => {
       <el-table :data="stockList" style="width: 100%">
         <el-table-column prop="stockCode" label="代码" width="100" />
         <el-table-column prop="stockName" label="名称" width="140" />
+        <el-table-column label="分级" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="tierTag(row.tier).type">
+              {{ tierTag(row.tier).label }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="market" label="市场" width="80">
           <template #default="{ row }">
             <el-tag size="small" :type="row.market === 'sh' ? 'danger' : 'primary'">

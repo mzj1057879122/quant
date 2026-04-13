@@ -15,6 +15,13 @@ class DailyQuoteResponse(BaseModel):
     volume: int
     turnover: Decimal
     changePct: Decimal | None = None
+    expma5: Decimal | None = None
+    expma13: Decimal | None = None
+    expma34: Decimal | None = None
+    expma89: Decimal | None = None
+    macdDiff: Decimal | None = None
+    macdDea: Decimal | None = None
+    macdBar: Decimal | None = None
     createdAt: datetime
 
     class Config:

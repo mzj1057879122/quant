@@ -18,7 +18,10 @@ async function loadData() {
     const params = {}
     if (selectedDate.value) params.date = selectedDate.value
     const res = await getDailyPrediction(params)
-    data.value = res.data
+    console.log('API res:', res)
+    console.log('res.data:', res.data)
+    data.value = res.data || { date: '', items: [], summary: { bullish: 0, bearish: 0, neutral: 0 } }
+    console.log('data.value.items:', data.value.items?.length)
   } finally {
     loading.value = false
   }

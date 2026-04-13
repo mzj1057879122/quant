@@ -19,7 +19,12 @@ def getDailyPrediction(
     db: Session = Depends(getDb),
 ):
     """查询指定日期的 v3_auto 预测结果，关联 watchlist 锚位信息和最新收盘价"""
-    target_date = DateType.fromisoformat(date) if date else DateType.today()
+    if date:
+        target_date = DateType.fromisoformat(date)
+    else:
+        # 默认取最近有数据的日期
+        latest = db.query(func.max(BacktestResult.predictDate)).filter(BacktestResult.version == "v3_auto").scalar()
+        target_date = latest if latest else DateType.today()
 
     rows = (
         db.query(BacktestResult, Watchlist)

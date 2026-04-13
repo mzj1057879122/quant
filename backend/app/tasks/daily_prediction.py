@@ -229,7 +229,7 @@ def _predictStock(db: Session, stock: Watchlist, today: date, rules: dict) -> di
         "stockCode": stock.stockCode,
         "stockName": stock.stockName,
         "predictDate": today,
-        "version": "v3_auto",
+        "version": "v4_auto",
         "technicalSignal": "；".join(signals) if signals else "无明显信号",
         "prediction": prediction,
         "confidence": confidence,

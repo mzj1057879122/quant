@@ -1,6 +1,6 @@
 from app.database import SessionLocal
 from app.services.config_service import getWatchList
-from app.services.quote_service import fetchAllWatchListQuotes
+from app.services.quote_service import fetchAllWatchListQuotes, calcExpmaForAll
 from app.utils.date_helper import isTradingDay
 from app.utils.logger import setupLogger
 from datetime import date
@@ -24,6 +24,8 @@ def runFetchQuotes() -> None:
 
         result = fetchAllWatchListQuotes(db, watchList)
         logger.info(f"定时拉取完成 成功={result['success']} 失败={result['failed']}")
+        calcExpmaForAll(db)
+        logger.info("EXPMA计算完成")
     except Exception as e:
         logger.error(f"定时拉取任务异常 错误={e}", exc_info=True)
     finally:

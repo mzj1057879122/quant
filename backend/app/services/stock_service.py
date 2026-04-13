@@ -64,14 +64,18 @@ def getStockList(
     keyword: str | None = None,
     page: int = 1,
     pageSize: int = 20,
+    tier: str | None = None,
 ) -> tuple[list[Stock], int]:
-    """获取股票列表（支持搜索和分页）"""
+    """获取股票列表（支持搜索、分页、tier过滤）"""
     query = db.query(Stock).filter(Stock.isActive == 1)
 
     if keyword:
         query = query.filter(
             (Stock.stockCode.contains(keyword)) | (Stock.stockName.contains(keyword))
         )
+
+    if tier:
+        query = query.filter(Stock.tier == tier)
 
     total = query.count()
     items = query.order_by(Stock.stockCode).offset((page - 1) * pageSize).limit(pageSize).all()

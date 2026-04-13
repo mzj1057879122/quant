@@ -1,12 +1,11 @@
 """
 量化回测服务
 
-回测规则（v9 anchor_range）：在 v8 anchor_cap 基础上新增进场距锚下限过滤（过滤假突破）：
+回测规则（v8 anchor_cap）：在 v7 plate 基础上新增进场距锚过滤 + A级硬止损兜底：
 
 进场增加：
   条件6：板块热度分 >= 0.5（板块当日涨停家数不能比昨日减少超过50%）
   条件7：进场价 <= 锚位 × 1.15（距锚不超过15%，过滤追高）
-  条件8：进场价 >= 锚位 × 1.05（距锚不低于5%，过滤假突破/贴近低点收盘）
 
 出场增加（高优先级）：
   plate_retreat：持仓中若 getPlateHotScore < 0.3 AND 成交量 >= 均量×1.5 → 出场
@@ -427,11 +426,7 @@ def backtestOneTicker(
             if float(q.closePrice) > anchor * 1.15:
                 continue
 
-            # 条件8：进场价不低于锚位5%（v9新增，过滤假突破/收盘贴近当日低点）
-            if float(q.closePrice) < anchor * 1.05:
-                continue
-
-            # 八条同时满足 → 启动日
+            # 七条同时满足 → 启动日
             entryInfo = {
                 "stockCode": q.stockCode,
                 "signalDate": q.tradeDate,

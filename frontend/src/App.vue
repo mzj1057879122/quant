@@ -99,6 +99,11 @@ onMounted(() => {
           </el-menu-item>
         </el-sub-menu>
 
+        <el-menu-item index="/backtest">
+          <el-icon><TrendCharts /></el-icon>
+          <template #title>回测报告</template>
+        </el-menu-item>
+
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <template #title>设置</template>

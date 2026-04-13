@@ -16,10 +16,11 @@ def listStocks(
     keyword: str | None = Query(None, description="搜索关键字"),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
+    tier: str | None = Query(None, description="分级过滤 A/B/C"),
     db: Session = Depends(getDb),
 ):
     """获取股票列表"""
-    items, total = stock_service.getStockList(db, keyword, page, pageSize)
+    items, total = stock_service.getStockList(db, keyword, page, pageSize, tier)
     return StockListResponse(total=total, items=items)
 
 

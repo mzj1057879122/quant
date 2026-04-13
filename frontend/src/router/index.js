@@ -74,6 +74,12 @@ const routes = [
     meta: { title: '案例分析' },
   },
   {
+    path: '/backtest',
+    name: 'BacktestReport',
+    component: () => import('../views/BacktestReport.vue'),
+    meta: { title: '回测报告' },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),

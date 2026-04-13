@@ -38,6 +38,27 @@ class DailyQuote(Base):
     changePct: Mapped[Decimal | None] = mapped_column(
         "change_pct", Numeric(8, 4), nullable=True, comment="涨跌幅"
     )
+    expma5: Mapped[Decimal | None] = mapped_column(
+        "expma5", Numeric(10, 3), nullable=True, comment="EXPMA5"
+    )
+    expma13: Mapped[Decimal | None] = mapped_column(
+        "expma13", Numeric(10, 3), nullable=True, comment="EXPMA13"
+    )
+    expma34: Mapped[Decimal | None] = mapped_column(
+        "expma34", Numeric(10, 3), nullable=True, comment="EXPMA34"
+    )
+    expma89: Mapped[Decimal | None] = mapped_column(
+        "expma89", Numeric(10, 3), nullable=True, comment="EXPMA89"
+    )
+    macdDiff: Mapped[Decimal | None] = mapped_column(
+        "macd_diff", Numeric(10, 4), nullable=True, comment="MACD DIF线=EMA12-EMA26"
+    )
+    macdDea: Mapped[Decimal | None] = mapped_column(
+        "macd_dea", Numeric(10, 4), nullable=True, comment="MACD DEA信号线=EMA9(DIF)"
+    )
+    macdBar: Mapped[Decimal | None] = mapped_column(
+        "macd_bar", Numeric(10, 4), nullable=True, comment="MACD柱=(DIF-DEA)*2"
+    )
     createdAt: Mapped[datetime] = mapped_column(
         "created_at", DateTime, nullable=False, default=datetime.now
     )
