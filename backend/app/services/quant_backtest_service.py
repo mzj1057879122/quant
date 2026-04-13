@@ -1,0 +1,557 @@
+"""
+量化回测服务
+
+回测规则（v8 anchor_cap）：在 v7 plate 基础上新增进场距锚过滤 + A级硬止损兜底：
+
+进场增加：
+  条件6：板块热度分 >= 0.5（板块当日涨停家数不能比昨日减少超过50%）
+  条件7：进场价 <= 锚位 × 1.15（距锚不超过15%，过滤追高）
+
+出场增加（高优先级）：
+  plate_retreat：持仓中若 getPlateHotScore < 0.3 AND 成交量 >= 均量×1.5 → 出场
+
+A 级（强概念，宽松持仓）：
+  - 硬止损兜底：收盘跌超入场价20% → 立即出场（新增）
+  - 止损条件：放量(>=1.5x均量)跌破锚位 → 出场
+  - 持仓上限：60天（不是30/45天）
+
+B 级（标准，v5规则）：
+  - gap_up_reversal（量>=2.5x + 跳空>2% + 被砸）→ 当日出场
+  - 放量(>=1.5x)跌破锚位 → 出场
+  - 固定比例止损 13%（原12%，放宽以减少过早止损）
+  - 持仓30天亏损 → 出场，45天强制出场
+
+C 级（弱势，严格止损）：
+  - 收盘 < 进场价 × 0.90（跌10%）→ 立即止损
+  - 持仓15天 → 强制出场
+"""
+
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+from sqlalchemy import func, text
+from sqlalchemy.orm import Session
+
+from app.models.daily_quote import DailyQuote
+from app.models.limit_up_plate import LimitUpPlate
+from app.models.quant_trade import QuantTrade
+from app.models.stock import Stock
+from app.utils.logger import setupLogger
+
+logger = setupLogger("quant_backtest")
+
+VOL_MULT_ENTRY = 1.8    # 进场量能倍数
+VOL_MULT_EXIT = 3.0     # 极值量出场倍数（兜底，次日开盘）
+VOL_MULT_EXIT_GAP = 2.5 # 跳空反转出场量能倍数（当日收盘）
+VOL_MULT_STOP = 1.5     # 放量跌破锚位止损倍数
+CHANGE_MIN = 0.05       # 最小涨幅5%
+HIGH_WINDOW = 20        # 收盘价突破窗口
+VOL_WINDOW = 10         # 均量计算窗口
+COOLDOWN_DAYS = 60      # 同一票冷却期
+GAP_UP_OPEN_MIN = 1.02  # 跳空反转：开盘高于前日收盘最小比例
+GAP_UP_ENTRY_MAX = 1.05 # 进场过滤：开盘不追超5%的跳空
+
+# B 级参数（标准）
+B_MAX_LOSS_PCT = 0.13    # v8: 放宽至13%，减少过早止损
+B_MAX_HOLD_DAYS_LOSS = 30
+B_MAX_HOLD_DAYS = 45
+
+# A 级参数（宽松）
+A_MAX_HOLD_DAYS = 60
+
+# C 级参数（严格）
+C_MAX_LOSS_PCT = 0.10
+C_MAX_HOLD_DAYS = 15
+
+
+def getPlateHotScore(db: Session, stockCode: str, tradeDate, sectorMap: dict) -> float:
+    """
+    计算指定股票在指定交易日的板块热度分（0.0-1.5）
+
+    Args:
+        db:        数据库会话
+        stockCode: 股票代码
+        tradeDate: 当日日期（date 对象）
+        sectorMap: stockCode → sector 名称的缓存字典（避免每次查库）
+
+    Returns:
+        热度分 0.0-1.5，若无数据返回 0.5（中性）
+    """
+    sector = sectorMap.get(stockCode)
+    if not sector:
+        return 0.5
+
+    prevDate = tradeDate - timedelta(days=1)
+    # 向前最多找7天（跳过非交易日）
+    for _ in range(7):
+        if prevDate.weekday() < 5:
+            break
+        prevDate -= timedelta(days=1)
+
+    try:
+        cntToday = (
+            db.query(func.count(LimitUpPlate.id))
+            .filter(LimitUpPlate.tradeDate == tradeDate, LimitUpPlate.plateName == sector)
+            .scalar()
+        ) or 0
+
+        cntYesterday = (
+            db.query(func.count(LimitUpPlate.id))
+            .filter(LimitUpPlate.tradeDate == prevDate, LimitUpPlate.plateName == sector)
+            .scalar()
+        ) or 0
+
+        if cntToday == 0 and cntYesterday == 0:
+            return 0.5
+
+        score = cntToday / max(cntYesterday, 1)
+        return min(score, 1.5)
+    except Exception:
+        return 0.5
+
+
+def runBacktest(db: Session, runId: str) -> dict:
+    """
+    主入口：对所有股票执行回测，写入 quant_trade 表，返回统计摘要。
+
+    如果相同 runId 已存在记录，先删除旧记录再重跑。
+    """
+    # 删除旧批次数据
+    deleted = db.query(QuantTrade).filter(QuantTrade.backtestRunId == runId).delete()
+    if deleted:
+        db.commit()
+        logger.info(f"已清除旧批次数据 runId={runId} count={deleted}")
+
+    # 查询所有股票代码及其 tier / sector
+    stockRows = (
+        db.query(DailyQuote.stockCode)
+        .distinct()
+        .all()
+    )
+    stockCodes = [row[0] for row in stockRows]
+
+    # 构建 stockCode → tier / sector 映射
+    tierMap: dict[str, str] = {}
+    sectorMap: dict[str, str] = {}
+    stockObjs = db.query(Stock.stockCode, Stock.tier, Stock.sector).filter(
+        Stock.stockCode.in_(stockCodes)
+    ).all()
+    for row in stockObjs:
+        tierMap[row.stockCode] = row.tier
+        if row.sector:
+            sectorMap[row.stockCode] = row.sector
+
+    # 预建板块热度缓存：{(sector, tradeDate) → cnt}
+    plateCountCache: dict[tuple, int] = {}
+    try:
+        rows = db.query(
+            LimitUpPlate.plateName,
+            LimitUpPlate.tradeDate,
+            func.count(LimitUpPlate.id).label("cnt"),
+        ).group_by(LimitUpPlate.plateName, LimitUpPlate.tradeDate).all()
+        for row in rows:
+            plateCountCache[(row.plateName, row.tradeDate)] = row.cnt
+    except Exception as e:
+        logger.error(f"构建板块热度缓存失败 错误={e}", exc_info=True)
+
+    logger.info(
+        f"开始回测 runId={runId} 股票数={len(stockCodes)} "
+        f"板块热度缓存条数={len(plateCountCache)}"
+    )
+
+    allTrades = []
+    for code in stockCodes:
+        quotes = (
+            db.query(DailyQuote)
+            .filter(DailyQuote.stockCode == code)
+            .order_by(DailyQuote.tradeDate.asc())
+            .all()
+        )
+        if len(quotes) < VOL_WINDOW + 1:
+            continue
+        tier = tierMap.get(code, "B")
+        sector = sectorMap.get(code)
+        trades = backtestOneTicker(quotes, tier, sector, plateCountCache)
+        allTrades.extend(trades)
+
+    # 批量写入
+    now = datetime.now()
+    records = []
+    for t in allTrades:
+        records.append(QuantTrade(
+            stockCode=t["stockCode"],
+            signalDate=t["signalDate"],
+            anchorPrice=Decimal(str(round(t["anchorPrice"], 3))),
+            entryPrice=Decimal(str(round(t["entryPrice"], 3))),
+            entryDate=t["entryDate"],
+            exitPrice=Decimal(str(round(t["exitPrice"], 3))) if t["exitPrice"] is not None else None,
+            exitDate=t["exitDate"],
+            exitReason=t["exitReason"],
+            returnPct=Decimal(str(round(t["returnPct"], 4))) if t["returnPct"] is not None else None,
+            holdDays=t["holdDays"],
+            backtestRunId=runId,
+            createdAt=now,
+        ))
+
+    if records:
+        db.bulk_save_objects(records)
+        db.commit()
+
+    summary = summarizeResults(allTrades)
+    logger.info(
+        f"回测完成 runId={runId} 总交易={summary['total']} "
+        f"胜率={summary['winRate']}% 均收益={summary['avgReturn']}%"
+    )
+    return summary
+
+
+def _plateHotScoreCached(
+    sector: str | None,
+    tradeDate,
+    plateCountCache: dict,
+) -> float:
+    """从预缓存字典计算板块热度分，无需查库"""
+    if not sector:
+        return 0.5
+    cntToday = plateCountCache.get((sector, tradeDate), 0)
+    # 找前一个交易日（往前最多找7天）
+    prevDate = tradeDate - timedelta(days=1)
+    for _ in range(7):
+        if prevDate.weekday() < 5:
+            break
+        prevDate -= timedelta(days=1)
+    cntYesterday = plateCountCache.get((sector, prevDate), 0)
+    if cntToday == 0 and cntYesterday == 0:
+        return 0.5
+    score = cntToday / max(cntYesterday, 1)
+    return min(score, 1.5)
+
+
+def backtestOneTicker(
+    quotes: list,
+    tier: str = "B",
+    sector: str | None = None,
+    plateCountCache: dict | None = None,
+) -> list:
+    """
+    单票回测，返回该票的交易记录列表（dict格式）。
+
+    quotes:           按 tradeDate 升序排列的 DailyQuote 列表
+    tier:             A/B/C，决定出场规则
+    sector:           股票所属板块名（用于热度过滤），可为 None
+    plateCountCache:  {(plateName, tradeDate) → cnt} 预缓存，为 None 时跳过板块过滤
+    """
+    if plateCountCache is None:
+        plateCountCache = {}
+    n = len(quotes)
+    trades = []
+    inPosition = False
+    entryInfo = {}
+    lastSignalIdx = -COOLDOWN_DAYS
+    pendingExit = None  # 'volume_top' 等待次日出场
+
+    for i in range(n):
+        q = quotes[i]
+
+        # 计算10日均量（前10日，不含当日）
+        volStart = max(0, i - VOL_WINDOW)
+        volSlice = quotes[volStart:i]
+        vol10 = sum(v.volume for v in volSlice) / len(volSlice) if volSlice else 0
+
+        # ── 处理极值量出场信号（次日开盘出场，用当日开盘价代替）──
+        if pendingExit and inPosition:
+            exitPrice = float(q.openPrice)
+            entryPrice = entryInfo["entryPrice"]
+            returnPct = (exitPrice - entryPrice) / entryPrice * 100
+            holdDays = i - entryInfo["entryIdx"]
+            trades.append(_makeTrade(entryInfo, exitPrice, q.tradeDate, "volume_top", holdDays, returnPct))
+            inPosition = False
+            pendingExit = None
+            continue
+
+        # ── 持仓中：按优先级检查出场 ──
+        if inPosition:
+            closePrice = float(q.closePrice)
+            openPrice = float(q.openPrice)
+            holdDays = i - entryInfo["entryIdx"]
+            prevClose = float(quotes[i - 1].closePrice) if i > 0 else closePrice
+
+            # 最高优先级（所有 tier 共用）：板块严重退潮 + 放量 → 出场
+            if plateCountCache:
+                hotScore = _plateHotScoreCached(sector, q.tradeDate, plateCountCache)
+                if hotScore < 0.3 and vol10 > 0 and q.volume >= vol10 * VOL_MULT_STOP:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "plate_retreat", holdDays, returnPct))
+                    inPosition = False
+                    pendingExit = None
+                    continue
+
+            if tier == "A":
+                # A级：宽松持仓
+                # 优先级0：硬止损兜底 -20%（v8新增）
+                if closePrice < entryInfo["entryPrice"] * 0.80:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "hard_stop", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+                # 优先级1：放量跌破锚位止损
+                if closePrice < entryInfo["anchorPrice"] and vol10 > 0 and q.volume >= vol10 * VOL_MULT_STOP:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "stop_loss", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+                # 优先级2：极值量兜底（量≥3x + 收<开，次日开盘出场）
+                if vol10 > 0 and q.volume >= vol10 * VOL_MULT_EXIT and closePrice < openPrice:
+                    pendingExit = "volume_top"
+                    continue
+
+                # 优先级3：60天强制出场
+                if holdDays >= A_MAX_HOLD_DAYS:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "time_stop", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+            elif tier == "C":
+                # C级：严格止损
+                # 优先级1：跌10%立即止损
+                if closePrice < entryInfo["entryPrice"] * (1 - C_MAX_LOSS_PCT):
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "pct_stop", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+                # 优先级2：15天强制出场
+                if holdDays >= C_MAX_HOLD_DAYS:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "time_stop", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+            else:
+                # B级：标准规则（v5）
+                # 优先级1：跳空反转出场
+                if (vol10 > 0 and q.volume >= vol10 * VOL_MULT_EXIT_GAP
+                        and openPrice > prevClose * GAP_UP_OPEN_MIN
+                        and closePrice < openPrice):
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "gap_up_reversal", holdDays, returnPct))
+                    inPosition = False
+                    pendingExit = None
+                    continue
+
+                # 优先级2：固定比例止损12%
+                if closePrice < entryInfo["entryPrice"] * (1 - B_MAX_LOSS_PCT):
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "pct_stop", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+                # 优先级3：放量跌破锚位止损
+                if closePrice < entryInfo["anchorPrice"] and vol10 > 0 and q.volume >= vol10 * VOL_MULT_STOP:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "stop_loss", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+                # 优先级4：极值量出场兜底（量≥3x + 收<开，次日开盘出场）
+                if vol10 > 0 and q.volume >= vol10 * VOL_MULT_EXIT and closePrice < openPrice:
+                    pendingExit = "volume_top"
+                    continue
+
+                # 优先级5：时间止损
+                if holdDays >= B_MAX_HOLD_DAYS_LOSS and closePrice < entryInfo["entryPrice"]:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "time_stop_loss", holdDays, returnPct))
+                    inPosition = False
+                    continue
+                if holdDays >= B_MAX_HOLD_DAYS:
+                    returnPct = (closePrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+                    trades.append(_makeTrade(entryInfo, closePrice, q.tradeDate, "time_stop", holdDays, returnPct))
+                    inPosition = False
+                    continue
+
+        # ── 不在仓位：检查进场条件 ──
+        if not inPosition:
+            # 冷却期检查
+            if i - lastSignalIdx < COOLDOWN_DAYS:
+                continue
+
+            # 需要前一日数据
+            if i < 1:
+                continue
+
+            prevQ = quotes[i - 1]
+            closePrice = float(q.closePrice)
+            prevClose = float(prevQ.closePrice)
+
+            # 条件1：成交量 ≥ 10日均量 × 1.8
+            if vol10 <= 0 or q.volume < vol10 * VOL_MULT_ENTRY:
+                continue
+
+            # 条件2：涨幅 ≥ 5%
+            if prevClose <= 0:
+                continue
+            changePct = (closePrice - prevClose) / prevClose
+            if changePct < CHANGE_MIN:
+                continue
+
+            # 条件3：收盘价突破过去20日最高收盘价（不含当日）
+            highStart = max(0, i - HIGH_WINDOW)
+            highSlice = quotes[highStart:i]
+            if not highSlice:
+                continue
+            max20Close = max(float(v.closePrice) for v in highSlice)
+            if closePrice <= max20Close:
+                continue
+
+            # 条件4：启动日必须是阳线
+            if float(q.closePrice) <= float(q.openPrice):
+                continue
+
+            # 条件5：不追跳空超5%的缺口
+            if float(q.openPrice) > prevClose * GAP_UP_ENTRY_MAX:
+                continue
+
+            # 条件6：板块热度过滤（板块当日涨停家数不能比昨日减少超过50%）
+            if plateCountCache:
+                hotScore = _plateHotScoreCached(sector, q.tradeDate, plateCountCache)
+                if hotScore < 0.5:
+                    continue
+
+            # 条件7：进场价不超过锚位15%（v8新增，过滤追高）
+            anchor = float(q.lowPrice)
+            if float(q.closePrice) > anchor * 1.15:
+                continue
+
+            # 七条同时满足 → 启动日
+            entryInfo = {
+                "stockCode": q.stockCode,
+                "signalDate": q.tradeDate,
+                "anchorPrice": float(q.lowPrice),
+                "entryPrice": closePrice,
+                "entryDate": q.tradeDate,
+                "entryIdx": i,
+            }
+            lastSignalIdx = i
+            inPosition = True
+
+    # ── 数据截止：仍在仓位则按最后一条数据出场 ──
+    if inPosition:
+        lastQ = quotes[-1]
+        exitPrice = float(lastQ.closePrice)
+        holdDays = (n - 1) - entryInfo["entryIdx"]
+        returnPct = (exitPrice - entryInfo["entryPrice"]) / entryInfo["entryPrice"] * 100
+        trades.append(_makeTrade(entryInfo, exitPrice, lastQ.tradeDate, "data_end", holdDays, returnPct))
+
+    return trades
+
+
+def _makeTrade(entryInfo: dict, exitPrice: float, exitDate, exitReason: str, holdDays: int, returnPct: float) -> dict:
+    return {
+        "stockCode": entryInfo["stockCode"],
+        "signalDate": entryInfo["signalDate"],
+        "anchorPrice": entryInfo["anchorPrice"],
+        "entryPrice": entryInfo["entryPrice"],
+        "entryDate": entryInfo["entryDate"],
+        "exitPrice": exitPrice,
+        "exitDate": exitDate,
+        "exitReason": exitReason,
+        "holdDays": holdDays,
+        "returnPct": returnPct,
+    }
+
+
+def summarizeResults(trades: list) -> dict:
+    """汇总回测结果统计"""
+    total = len(trades)
+    if total == 0:
+        return {
+            "total": 0, "wins": 0, "winRate": 0.0,
+            "avgReturn": 0.0, "maxReturn": 0.0, "minReturn": 0.0,
+            "byQuarter": [], "byExitReason": [],
+        }
+
+    wins = sum(1 for t in trades if t["returnPct"] > 0)
+    winRate = round(wins / total * 100, 2)
+    returns = [t["returnPct"] for t in trades]
+    avgReturn = round(sum(returns) / total, 2)
+    maxReturn = round(max(returns), 2)
+    minReturn = round(min(returns), 2)
+
+    # 按季度统计
+    quarterMap: dict[str, dict] = {}
+    for t in trades:
+        d = t["signalDate"]
+        qKey = f"{d.year}Q{(d.month - 1) // 3 + 1}"
+        if qKey not in quarterMap:
+            quarterMap[qKey] = {"total": 0, "wins": 0, "returns": []}
+        quarterMap[qKey]["total"] += 1
+        if t["returnPct"] > 0:
+            quarterMap[qKey]["wins"] += 1
+        quarterMap[qKey]["returns"].append(t["returnPct"])
+
+    byQuarter = [
+        {
+            "quarter": k,
+            "total": v["total"],
+            "wins": v["wins"],
+            "winRate": round(v["wins"] / v["total"] * 100, 2) if v["total"] > 0 else 0,
+            "avgReturn": round(sum(v["returns"]) / v["total"], 2) if v["total"] > 0 else 0,
+        }
+        for k, v in sorted(quarterMap.items())
+    ]
+
+    # 按出场原因统计
+    reasonMap: dict[str, dict] = {}
+    for t in trades:
+        r = t["exitReason"]
+        if r not in reasonMap:
+            reasonMap[r] = {"total": 0, "wins": 0}
+        reasonMap[r]["total"] += 1
+        if t["returnPct"] > 0:
+            reasonMap[r]["wins"] += 1
+
+    byExitReason = [
+        {
+            "reason": k,
+            "total": v["total"],
+            "wins": v["wins"],
+            "winRate": round(v["wins"] / v["total"] * 100, 2) if v["total"] > 0 else 0,
+        }
+        for k, v in sorted(reasonMap.items())
+    ]
+
+    return {
+        "total": total,
+        "wins": wins,
+        "winRate": winRate,
+        "avgReturn": avgReturn,
+        "maxReturn": maxReturn,
+        "minReturn": minReturn,
+        "byQuarter": byQuarter,
+        "byExitReason": byExitReason,
+    }
+
+
+def getRunIds(db: Session) -> list[str]:
+    """获取所有回测批次ID列表"""
+    rows = db.query(QuantTrade.backtestRunId).distinct().all()
+    return sorted([r[0] for r in rows], reverse=True)
+
+
+def getRunSummary(db: Session, runId: str) -> dict:
+    """从数据库读取某批次的统计摘要"""
+    records = db.query(QuantTrade).filter(QuantTrade.backtestRunId == runId).all()
+    trades = [
+        {
+            "stockCode": r.stockCode,
+            "signalDate": r.signalDate,
+            "returnPct": float(r.returnPct) if r.returnPct is not None else 0.0,
+            "exitReason": r.exitReason,
+        }
+        for r in records
+    ]
+    return summarizeResults(trades)
