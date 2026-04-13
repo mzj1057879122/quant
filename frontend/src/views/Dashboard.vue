@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getSignalList } from '../api/signal'
 import { getLatestBrief } from '../api/brief'
-import { getBacktestStats } from '../api/backtest'
+// import { getBacktestStats } from '../api/backtest'
 import { getWatchlistItems } from '../api/watchlist'
 import SignalCard from '../components/SignalCard.vue'
 
@@ -18,7 +18,7 @@ const briefExpanded = ref(false)
 const backtestRate = ref(null)
 const watchlistCount = ref(0)
 const todaySignalCount = ref(0)
-const highConfidenceRate = ref(null)
+const avgReturn = ref(null)
 
 // 今日重点关注
 const focusStocks = ref([])
@@ -31,7 +31,7 @@ async function loadData() {
   try {
     const [briefRes, btRes, watchRes, signalCountRes, signalRes] = await Promise.all([
       getLatestBrief(),
-      getBacktestStats(),
+      fetch('/api/v1/quant-backtest/runs').then(r => r.json()),
       getWatchlistItems({}),
       getSignalList({ pageSize: 1 }),
       getSignalList({ pageSize: 10 }),
@@ -40,16 +40,17 @@ async function loadData() {
     // 盘前纪要（不指定 source，取最新一条）
     latestBrief.value = briefRes.brief
 
-    // 回测总胜率
-    if (btRes.overall) {
-      backtestRate.value = btRes.overall.rate
-    }
-
-    // 高置信胜率
-    if (btRes.byConfidence) {
-      const highRow = btRes.byConfidence.find(r => r.confidence === '高')
-      highConfidenceRate.value = highRow ? highRow.rate : null
-    }
+    // 回测总胜率（量化策略 v7，取最新批次）
+    try {
+      const runsData = btRes
+      const latestRun = (runsData.runs || [])[0]
+      if (latestRun) {
+        const summaryRes = await fetch(`/api/v1/quant-backtest/summary?runId=${latestRun}`)
+        const summaryData = await summaryRes.json()
+        backtestRate.value = summaryData.winRate ?? null
+        avgReturn.value = summaryData.avgReturn ?? null
+      }
+    } catch (e) { /* 静默 */ }
 
     // 自选股总数
     watchlistCount.value = watchRes.total ?? 0
@@ -135,9 +136,9 @@ onMounted(loadData)
         <el-card shadow="never">
           <div style="text-align: center; padding: 8px 0">
             <div style="font-size: 28px; font-weight: bold; color: #e6a23c">
-              {{ highConfidenceRate !== null ? highConfidenceRate + '%' : '-' }}
+              {{ avgReturn !== null ? avgReturn + '%' : '-' }}
             </div>
-            <div style="margin-top: 6px; color: #909399; font-size: 13px">高置信胜率</div>
+            <div style="margin-top: 6px; color: #909399; font-size: 13px">平均收益率</div>
           </div>
         </el-card>
       </el-col>
