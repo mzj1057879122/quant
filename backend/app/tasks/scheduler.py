@@ -1,6 +1,8 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+SHANGHAI_TZ = "Asia/Shanghai"
+
 from app.tasks.fetch_quotes import runFetchQuotes
 from app.tasks.detect_signals import runDetectSignals, runSendNotifications
 from app.tasks.fetch_heat import runFetchHeat
@@ -18,109 +20,109 @@ scheduler = BackgroundScheduler()
 def initScheduler() -> None:
     """初始化定时任务调度器"""
 
-    # 每个交易日18:00拉取行情数据
-    scheduler.add_job(
-        runFetchQuotes,
-        trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri"),
-        id="fetch_daily_quotes",
-        name="拉取日线行情",
-        replace_existing=True,
-    )
-
-    # 每个交易日18:30执行信号检测
-    scheduler.add_job(
-        runDetectSignals,
-        trigger=CronTrigger(hour=18, minute=30, day_of_week="mon-fri"),
-        id="detect_signals",
-        name="检测突破信号",
-        replace_existing=True,
-    )
-
-    # 每个交易日18:45推送通知
-    scheduler.add_job(
-        runSendNotifications,
-        trigger=CronTrigger(hour=18, minute=45, day_of_week="mon-fri"),
-        id="send_notifications",
-        name="推送微信通知",
-        replace_existing=True,
-    )
-
-    # 每个交易日15:30拉取股票热度数据
-    scheduler.add_job(
-        runFetchHeat,
-        trigger=CronTrigger(hour=15, minute=30, day_of_week="mon-fri"),
-        id="fetch_stock_heat",
-        name="拉取股票热度",
-        replace_existing=True,
-    )
-
-    # 每个交易日09:00（北京时间，UTC+8，即 UTC 01:00）采集盘前纪要
+    # 每个交易日08:30采集盘前纪要
     scheduler.add_job(
         runFetchMorningBrief,
-        trigger=CronTrigger(hour=1, minute=0, day_of_week="mon-fri"),
+        trigger=CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
         id="fetch_morning_brief",
         name="采集盘前纪要",
         replace_existing=True,
     )
 
-    # 每个交易日16:00（北京时间，UTC+8，即 UTC 08:00）验证昨日预测
-    scheduler.add_job(
-        runVerifyPredictions,
-        trigger=CronTrigger(hour=8, minute=0, day_of_week="mon-fri"),
-        id="verify_predictions",
-        name="验证昨日预测",
-        replace_existing=True,
-    )
-
-    # 每个交易日16:30（北京时间，UTC+8，即 UTC 08:30）执行每日预测打分
-    scheduler.add_job(
-        runDailyPrediction,
-        trigger=CronTrigger(hour=8, minute=30, day_of_week="mon-fri"),
-        id="daily_prediction",
-        name="每日预测打分",
-        replace_existing=True,
-    )
-
-    # 每个交易日16:05（北京时间，UTC+8，即 UTC 08:05）采集涨停板块数据
+    # 每个交易日09:05采集涨停板块数据
     scheduler.add_job(
         _runFetchLimitUp,
-        trigger=CronTrigger(hour=8, minute=5, day_of_week="mon-fri"),
+        trigger=CronTrigger(hour=9, minute=5, day_of_week="mon-fri", timezone="Asia/Shanghai"),
         id="fetch_limit_up",
         name="采集涨停板块",
         replace_existing=True,
     )
 
-    # 每个交易日18:15（北京时间，UTC+8，即 UTC 10:15）计算 EXPMA
+    # 每个交易日09:08验证昨日预测
+    scheduler.add_job(
+        runVerifyPredictions,
+        trigger=CronTrigger(hour=9, minute=8, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="verify_predictions",
+        name="验证昨日预测",
+        replace_existing=True,
+    )
+
+    # 每个交易日09:30执行每日预测打分
+    scheduler.add_job(
+        runDailyPrediction,
+        trigger=CronTrigger(hour=9, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="daily_prediction",
+        name="每日预测打分",
+        replace_existing=True,
+    )
+
+    # 每个交易日15:30（北京时间）拉取股票热度数据
+    scheduler.add_job(
+        runFetchHeat,
+        trigger=CronTrigger(hour=15, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="fetch_stock_heat",
+        name="拉取股票热度",
+        replace_existing=True,
+    )
+
+    # 每个交易日16:00拉取行情数据
+    scheduler.add_job(
+        runFetchQuotes,
+        trigger=CronTrigger(hour=16, minute=0, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="fetch_daily_quotes",
+        name="拉取日线行情",
+        replace_existing=True,
+    )
+
+    # 每个交易日16:20计算 EXPMA
     scheduler.add_job(
         _runCalcExpma,
-        trigger=CronTrigger(hour=10, minute=15, day_of_week="mon-fri"),
+        trigger=CronTrigger(hour=16, minute=20, day_of_week="mon-fri", timezone="Asia/Shanghai"),
         id="calc_expma",
         name="计算EXPMA均线",
         replace_existing=True,
     )
 
-    # 每周五18:30（北京时间，UTC+8，即 UTC 10:30）计算所有股票周线数据
+    # 每个交易日16:30执行信号检测
+    scheduler.add_job(
+        runDetectSignals,
+        trigger=CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="detect_signals",
+        name="检测突破信号",
+        replace_existing=True,
+    )
+
+    # 每个交易日16:45推送通知
+    scheduler.add_job(
+        runSendNotifications,
+        trigger=CronTrigger(hour=16, minute=45, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="send_notifications",
+        name="推送微信通知",
+        replace_existing=True,
+    )
+
+    # 每周五17:00计算所有股票周线数据
     scheduler.add_job(
         _runCalcWeekly,
-        trigger=CronTrigger(hour=10, minute=30, day_of_week="fri"),
+        trigger=CronTrigger(hour=17, minute=0, day_of_week="fri", timezone="Asia/Shanghai"),
         id="calc_weekly",
         name="计算周线数据",
         replace_existing=True,
     )
 
-    # 每周日UTC 22:00（北京周一 06:00）执行量化回测
+    # 每周日22:00执行量化回测
     scheduler.add_job(
         _runQuantBacktest,
-        trigger=CronTrigger(hour=22, minute=0, day_of_week="sun"),
+        trigger=CronTrigger(hour=22, minute=0, day_of_week="sun", timezone="Asia/Shanghai"),
         id="quant_backtest",
         name="量化策略回测",
         replace_existing=True,
     )
 
-    # 每周六10:00同步股票列表
+    # 每周六10:00（北京时间）同步股票列表
     scheduler.add_job(
         _runSyncStockList,
-        trigger=CronTrigger(hour=10, minute=0, day_of_week="sat"),
+        trigger=CronTrigger(hour=10, minute=0, day_of_week="sat", timezone="Asia/Shanghai"),
         id="sync_stock_list",
         name="同步股票列表",
         replace_existing=True,
