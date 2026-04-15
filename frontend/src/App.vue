@@ -104,6 +104,11 @@ onMounted(() => {
           <template #title>回测报告</template>
         </el-menu-item>
 
+        <el-menu-item index="/rule-review">
+          <el-icon><DataAnalysis /></el-icon>
+          <template #title>规则复盘</template>
+        </el-menu-item>
+
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <template #title>设置</template>

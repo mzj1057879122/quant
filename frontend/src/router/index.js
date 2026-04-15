@@ -80,6 +80,12 @@ const routes = [
     meta: { title: '回测报告' },
   },
   {
+    path: '/rule-review',
+    name: 'RuleReview',
+    component: () => import('../views/RuleReview.vue'),
+    meta: { title: '规则复盘' },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),
