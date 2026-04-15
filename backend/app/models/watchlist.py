@@ -38,6 +38,12 @@ class Watchlist(Base):
     tier: Mapped[str | None] = mapped_column(
         "tier", String(1), nullable=True, comment="分级：A/B/C"
     )
+    sortOrder: Mapped[int] = mapped_column(
+        "sort_order", Integer, nullable=False, default=0, comment="排序序号"
+    )
+    sectorColor: Mapped[str | None] = mapped_column(
+        "sector_color", String(20), nullable=True, comment="板块背景色"
+    )
     createdAt: Mapped[datetime] = mapped_column(
         "created_at", DateTime, nullable=False, default=datetime.now
     )

@@ -24,6 +24,18 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("数据库表检查完成")
 
+    # 自动补齐 watchlist 新增字段（兼容旧库）
+    with engine.connect() as conn:
+        for col_def in [
+            "ALTER TABLE watchlist ADD COLUMN sort_order INT NOT NULL DEFAULT 0",
+            "ALTER TABLE watchlist ADD COLUMN sector_color VARCHAR(20) NULL",
+        ]:
+            try:
+                conn.execute(__import__("sqlalchemy").text(col_def))
+                conn.commit()
+            except Exception:
+                pass  # 字段已存在则忽略
+
     # 初始化默认配置 + 恢复卡住的文章
     db = SessionLocal()
     try:
