@@ -15,6 +15,7 @@ from app.api.morning_brief import router as briefRouter
 from app.api.strategy import router as strategyRouter
 from app.api.prediction import router as predictionRouter
 from app.api.quant_backtest import router as quantBacktestRouter
+from app.api.rule_review import router as ruleReviewRouter
 
 apiRouter = APIRouter(prefix="/api/v1")
 
@@ -33,3 +34,4 @@ apiRouter.include_router(briefRouter)
 apiRouter.include_router(strategyRouter)
 apiRouter.include_router(predictionRouter)
 apiRouter.include_router(quantBacktestRouter)
+router.include_router(ruleReviewRouter)

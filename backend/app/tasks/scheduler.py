@@ -10,6 +10,7 @@ from app.tasks.fetch_morning_brief import runFetchMorningBrief
 from app.tasks.daily_prediction import runDailyPrediction
 from app.tasks.verify_predictions import runVerifyPredictions
 from app.tasks.fetch_limit_up import runFetchLimitUp
+from app.tasks.daily_rule_review import runDailyRuleReview
 from app.utils.logger import setupLogger
 
 logger = setupLogger("scheduler")
@@ -46,6 +47,16 @@ def initScheduler() -> None:
         name="验证昨日预测",
         replace_existing=True,
     )
+
+    # 每个交易日09:10规则复盘（验证完成后分析30天滚动数据）
+    scheduler.add_job(
+        runDailyRuleReview,
+        trigger=CronTrigger(hour=9, minute=10, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="daily_rule_review",
+        name="规则复盘分析",
+        replace_existing=True,
+    )
+
 
     # 每个交易日09:30执行每日预测打分
     scheduler.add_job(
