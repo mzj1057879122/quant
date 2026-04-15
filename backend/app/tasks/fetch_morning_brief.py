@@ -1,4 +1,5 @@
-from datetime import date
+import re
+from datetime import date, datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -24,103 +25,120 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    # Cookie过期时内容会变空，后端日志会出现 ⚠️ Cookie已失效 错误，请更新
+    "Cookie": "SESSION=NDI4YWJhM2UtNDM4Yi00YjU2LWJjNzgtNGFiNDdiYWMxYzhl; Hm_lvt_58aa18061df7855800f2a1b32d6da7f4=1774855487,1775547199,1775723406,1776070948; Hm_lpvt_58aa18061df7855800f2a1b32d6da7f4=1776244013",
 }
 
 
-def _fetchLatestArticle(source: str, url: str) -> dict | None:
-    """抓取用户主页，返回最新文章的日期和内容，失败返回 None"""
+def _decodeNuxtStr(s: str) -> str:
+    """解码NUXT字符串：\\n/\\"/\\uXXXX"""
+    s = s.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
+    s = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
+    return s
+
+
+def _extractFullText(article_url: str) -> str | None:
+    """
+    从文章详情页（/a/xxx）的NUXT数据中提取完整正文HTML，解析为纯文本。
+    不需要Cookie，SSR直接返回。
+    """
+    try:
+        resp = requests.get(article_url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+
+        nuxt_match = re.search(r'window\.__NUXT__\s*=\s*(.+?);\s*</script>', resp.text, re.DOTALL)
+        if not nuxt_match:
+            return None
+
+        raw = nuxt_match.group(1)
+        # 找最长的字符串（即文章HTML内容，通常>1000字符）
+        long_strs = re.findall(r'"((?:[^"\\]|\\.){1000,})"', raw)
+        if not long_strs:
+            return None
+
+        # 取最长的（排除脚本/样式等干扰）
+        best = max(long_strs, key=len)
+        html_content = _decodeNuxtStr(best)
+
+        # 过滤：必须包含中文字符
+        if not re.search(r'[\u4e00-\u9fff]', html_content):
+            return None
+
+        soup = BeautifulSoup(html_content, "html.parser")
+        text = soup.get_text(separator="\n", strip=True)
+
+        # 基本有效性检查
+        if len(text) < 200 or "登录注册" in text:
+            return None
+
+        return text
+
+    except Exception as e:
+        logger.error(f"提取文章全文失败 url={article_url} 错误={e}", exc_info=True)
+        return None
+
+
+def _fetchArticlesByDate(source: str, url: str) -> list[dict]:
+    """
+    从用户主页获取文章列表（article_id + sync_time），
+    返回 [{"articleDate": date, "articleId": str}, ...]
+    """
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
+
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # 找到文章列表中第一篇文章链接
-        article_link = None
+        # 从HTML的a标签里找 /a/xxx 链接
+        article_links = []
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if "/p/" in href or "/article/" in href:
-                article_link = href
-                break
-
-        if not article_link:
-            # 尝试更宽泛的选择器：带 class 含 article/post 的链接
-            for a in soup.select("a[href]"):
-                href = a["href"]
-                if href.startswith("/") and len(href) > 5:
-                    article_link = href
-                    break
-
-        if not article_link:
-            logger.error(f"未找到文章链接 source={source} url={url}")
-            return None
-
-        # 补全为绝对路径
-        if article_link.startswith("/"):
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            article_link = f"{parsed.scheme}://{parsed.netloc}{article_link}"
-
-        # 抓取文章正文
-        art_resp = requests.get(article_link, headers=HEADERS, timeout=15)
-        art_resp.raise_for_status()
-        art_soup = BeautifulSoup(art_resp.text, "html.parser")
-
-        # 提取正文内容（尝试常见选择器）
-        content = ""
-        for selector in [
-            "div.article-text.p_coten#first",
-            "div.article-text",
-            "div.article-content",
-            "div.content",
-            "article",
-        ]:
-            node = art_soup.select_one(selector)
-            if node:
-                content = node.get_text(separator="\n", strip=True)
-                break
-
-        if not content:
-            # 降级：取 <body> 文本
-            body = art_soup.find("body")
-            content = body.get_text(separator="\n", strip=True) if body else ""
-
-        if not content:
-            logger.error(f"正文为空 source={source} article_url={article_link}")
-            return None
-
-        # 尝试从页面提取文章发布日期
-        article_date: date | None = None
-        for time_tag in art_soup.find_all(["time", "span", "div"]):
-            text = time_tag.get_text(strip=True)
-            # 匹配 2025-xx-xx 或 2026-xx-xx 格式
-            import re
-            m = re.search(r"(20\d{2})[-/](0?\d|1[0-2])[-/](0?\d|[12]\d|3[01])", text)
+            m = re.match(r'^/a/([a-z0-9]+)$', href)
             if m:
-                try:
-                    article_date = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-                    break
-                except ValueError:
-                    continue
+                article_links.append(m.group(1))
 
-        return {"articleDate": article_date, "content": content, "articleUrl": article_link}
+        if not article_links:
+            # 降级：从NUXT数据提取
+            nuxt_match = re.search(r'window\.__NUXT__\s*=\s*(.+?);\s*</script>', resp.text, re.DOTALL)
+            if nuxt_match:
+                raw = nuxt_match.group(1)
+                article_links = re.findall(r'article_id:"([^"]+)"', raw)
 
-    except requests.RequestException as e:
-        logger.error(f"HTTP请求失败 source={source} url={url} 错误={e}", exc_info=True)
-        return None
+        sync_times = []
+        nuxt_match = re.search(r'window\.__NUXT__\s*=\s*(.+?);\s*</script>', resp.text, re.DOTALL)
+        if nuxt_match:
+            sync_times = re.findall(r'sync_time:"([^"]+)"', nuxt_match.group(1))
+
+        articles = []
+        for i, art_id in enumerate(article_links):
+            try:
+                st = sync_times[i] if i < len(sync_times) else None
+                art_date = datetime.strptime(st[:10], "%Y-%m-%d").date() if st else None
+                articles.append({"articleDate": art_date, "articleId": art_id})
+            except Exception:
+                continue
+
+        return articles
+
     except Exception as e:
-        logger.error(f"解析失败 source={source} url={url} 错误={e}", exc_info=True)
-        return None
+        logger.error(f"获取文章列表失败 source={source} 错误={e}", exc_info=True)
+        return []
 
 
 def _saveRecord(db, brief_date: date, source: str, raw_content: str) -> bool:
-    """插入 morning_brief 记录，已存在则跳过，返回是否插入成功"""
-    record = MorningBrief(
-        briefDate=brief_date,
-        source=source,
-        rawContent=raw_content,
-    )
+    existing = db.query(MorningBrief).filter(
+        MorningBrief.briefDate == brief_date,
+        MorningBrief.source == source
+    ).first()
+    if existing:
+        # 如果之前是空壳/截断数据，更新
+        if len(existing.rawContent or '') < 500:
+            existing.rawContent = raw_content
+            db.commit()
+            return True
+        return False
     try:
-        db.add(record)
+        db.add(MorningBrief(briefDate=brief_date, source=source, rawContent=raw_content))
         db.commit()
         return True
     except IntegrityError:
@@ -128,36 +146,43 @@ def _saveRecord(db, brief_date: date, source: str, raw_content: str) -> bool:
         return False
 
 
-def runFetchMorningBrief() -> None:
-    """定时任务：采集盘前纪要（每个交易日 09:00 北京时间执行）"""
-    today = date.today()
-    if not isTradingDay(today):
+def runFetchMorningBrief(targetDate: date | None = None) -> None:
+    """
+    采集盘前纪要。targetDate=None 时采今天；传入日期时补跑指定日期。
+    """
+    today = targetDate or date.today()
+    if not targetDate and not isTradingDay(today):
         logger.info(f"非交易日跳过 date={today}")
         return
 
     db = SessionLocal()
     try:
         for source, url in SOURCES.items():
-            # 检查今天数据是否已存在
-            existing = (
-                db.query(MorningBrief)
-                .filter(MorningBrief.briefDate == today, MorningBrief.source == source)
-                .first()
-            )
-            if existing:
-                logger.info(f"已存在今日记录，跳过 source={source} date={today}")
+            articles = _fetchArticlesByDate(source, url)
+            if not articles:
+                logger.error(f"获取文章列表失败 source={source}")
                 continue
 
-            result = _fetchLatestArticle(source, url)
-            if not result:
-                logger.error(f"采集失败 source={source}")
+            # 找目标日期的文章
+            matched = next((a for a in articles if a["articleDate"] == today), None)
+            if not matched:
+                available = [a["articleDate"] for a in articles[:5]]
+                logger.info(f"未找到目标日期文章 source={source} date={today} available={available}")
                 continue
 
-            inserted = _saveRecord(db, today, source, result["content"])
-            if inserted:
-                logger.info(f"盘前纪要保存成功 source={source} date={today}")
+            # 抓完整全文
+            art_url = f"https://www.jiuyangongshe.com/a/{matched['articleId']}"
+            full_text = _extractFullText(art_url)
+
+            if not full_text:
+                logger.error(f"⚠️ Cookie已失效或文章内容为空 source={source} url={art_url}，请更新Cookie")
+                continue
+
+            saved = _saveRecord(db, today, source, full_text)
+            if saved:
+                logger.info(f"盘前纪要保存成功 source={source} date={today} len={len(full_text)}")
             else:
-                logger.info(f"记录已存在（并发写入）跳过 source={source} date={today}")
+                logger.info(f"已存在有效记录，跳过 source={source} date={today}")
 
     except Exception as e:
         logger.error(f"盘前纪要采集任务异常 错误={e}", exc_info=True)
