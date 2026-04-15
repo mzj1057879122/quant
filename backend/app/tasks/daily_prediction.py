@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -66,6 +66,20 @@ def _calcAvgVolume(quotes: list[DailyQuote], n: int = 5) -> Decimal | None:
     recent = quotes[-(n + 1) : -1]
     total = sum(q.volume for q in recent)
     return Decimal(total) / n
+
+
+def _getMarketState(db: Session, tradeDate: date) -> str:
+    """根据当天涨停板块数量判断市场环境（>=3活跃, 1-2分化, 0低迷）"""
+    count = db.execute(
+        select(func.count(LimitUpPlate.plateName.distinct()))
+        .where(LimitUpPlate.tradeDate == tradeDate)
+    ).scalar() or 0
+    if count >= 3:
+        return f"市场活跃（{count}个板块涨停）"
+    elif count >= 1:
+        return f"市场分化（{count}个板块涨停）"
+    else:
+        return "市场低迷（无涨停板块）"
 
 
 def _getPlateNames(db: Session, tradeDate: date) -> set[str]:
@@ -225,12 +239,23 @@ def _predictStock(db: Session, stock: Watchlist, today: date, rules: dict) -> di
         prediction = "中性"
         confidence = "低"
 
+    # --- 四维定性：环境/个股/风险 ---
+    marketState = _getMarketState(db, today)
+
+    _negKeywords = ["破坏", "退潮", "冷寂", "顶部风险"]
+    riskSignals = [s for s in signals if any(kw in s for kw in _negKeywords)]
+    stockSignals = [s for s in signals if not any(kw in s for kw in _negKeywords)]
+    stockDesc = "；".join(stockSignals) if stockSignals else "无明显信号"
+    riskDesc = "；".join(riskSignals) if riskSignals else "暂无明显风险"
+
+    technicalSignal = f"【环境】{marketState}；【个股】{stockDesc}；【风险】{riskDesc}"
+
     return {
         "stockCode": stock.stockCode,
         "stockName": stock.stockName,
         "predictDate": today,
         "version": "v4_auto",
-        "technicalSignal": "；".join(signals) if signals else "无明显信号",
+        "technicalSignal": technicalSignal,
         "prediction": prediction,
         "confidence": confidence,
     }
