@@ -4,13 +4,7 @@ import { getDailyPrediction } from '../api/prediction'
 
 const loading = ref(false)
 const data = ref({ date: '', items: [], summary: { bullish: 0, bearish: 0, neutral: 0 } })
-
 const selectedDate = ref('')
-const filterPrediction = ref('全部')
-const filterConfidence = ref('')
-
-const predictionTabs = ['全部', '看多', '看空', '中性']
-const confidenceOptions = ['高', '中', '低']
 
 async function loadData() {
   loading.value = true
@@ -18,23 +12,22 @@ async function loadData() {
     const params = {}
     if (selectedDate.value) params.date = selectedDate.value
     const res = await getDailyPrediction(params)
-    console.log('API res:', res)
-    console.log('res.data:', res.data)
     data.value = res.data || { date: '', items: [], summary: { bullish: 0, bearish: 0, neutral: 0 } }
-    console.log('data.value.items:', data.value.items?.length)
   } finally {
     loading.value = false
   }
 }
 
-const filteredItems = computed(() => {
-  let items = data.value.items || []
-  if (filterPrediction.value !== '全部') {
-    items = items.filter(i => i.prediction === filterPrediction.value)
-  }
-  if (filterConfidence.value) {
-    items = items.filter(i => i.confidence === filterConfidence.value)
-  }
+const CONFIDENCE_ORDER = { '高': 0, '中': 1, '低': 2 }
+const PREDICTION_ORDER = { '看多': 0, '看空': 1, '中性': 2 }
+
+const sortedItems = computed(() => {
+  const items = [...(data.value.items || [])]
+  items.sort((a, b) => {
+    const predDiff = (PREDICTION_ORDER[a.prediction] ?? 9) - (PREDICTION_ORDER[b.prediction] ?? 9)
+    if (predDiff !== 0) return predDiff
+    return (CONFIDENCE_ORDER[a.confidence] ?? 9) - (CONFIDENCE_ORDER[b.confidence] ?? 9)
+  })
   return items
 })
 
@@ -45,9 +38,9 @@ function predictionColor(pred) {
 }
 
 function predictionText(pred) {
-  if (pred === '看多') return '↑看多'
-  if (pred === '看空') return '↓看空'
-  return '→中性'
+  if (pred === '看多') return '↑ 看多'
+  if (pred === '看空') return '↓ 看空'
+  return '→ 中性'
 }
 
 function confidenceType(conf) {
@@ -56,102 +49,45 @@ function confidenceType(conf) {
   return 'info'
 }
 
-function changeClass(val) {
-  if (val === null || val === undefined) return ''
-  return val >= 0 ? 'positive' : 'negative'
+function verifyIcon(row) {
+  const val = row.actualChangePct
+  if (val === null || val === undefined) return '-'
+  if (row.prediction === '看多') return val > 0 ? '✅' : '❌'
+  if (row.prediction === '看空') return val < 0 ? '✅' : '❌'
+  return '-'
 }
-
-function formatLatestDate(dateStr) {
-  if (!dateStr) return '-'
-  const parts = dateStr.split('-')
-  if (parts.length < 3) return dateStr
-  return `${parts[1]}/${parts[2]}`
-}
-
-const summaryDataNote = computed(() => {
-  const d = data.value.items?.[0]?.latestDate
-  if (!d) return ''
-  return `数据截至 ${d} 收盘，每日16:30自动更新`
-})
 
 onMounted(loadData)
 </script>
 
 <template>
   <div class="daily-prediction">
-    <!-- 汇总卡片 -->
-    <el-row :gutter="16" class="summary-row">
-      <el-col :span="8">
-        <el-card shadow="never" class="summary-card bullish">
-          <div class="card-inner">
-            <div class="card-num">{{ data.summary.bullish }}</div>
-            <div class="card-label">↑ 看多</div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="8">
-        <el-card shadow="never" class="summary-card bearish">
-          <div class="card-inner">
-            <div class="card-num">{{ data.summary.bearish }}</div>
-            <div class="card-label">↓ 看空</div>
-          </div>
-        </el-card>
-      </el-col>
-      <el-col :span="8">
-        <el-card shadow="never" class="summary-card neutral">
-          <div class="card-inner">
-            <div class="card-num">{{ data.summary.neutral }}</div>
-            <div class="card-label">→ 中性</div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-    <div v-if="summaryDataNote" class="summary-note">{{ summaryDataNote }}</div>
-
-    <!-- 筛选栏 -->
-    <el-card shadow="never" class="filter-card">
-      <div class="filter-bar">
-        <el-radio-group v-model="filterPrediction" size="small">
-          <el-radio-button v-for="t in predictionTabs" :key="t" :label="t" :value="t" />
-        </el-radio-group>
-        <el-select
-          v-model="filterConfidence"
-          placeholder="置信度"
-          clearable
-          size="small"
-          style="width: 100px; margin-left: 12px"
-        >
-          <el-option v-for="c in confidenceOptions" :key="c" :label="c" :value="c" />
-        </el-select>
-        <el-date-picker
-          v-model="selectedDate"
-          type="date"
-          placeholder="日期（默认今天）"
-          value-format="YYYY-MM-DD"
-          size="small"
-          style="width: 160px; margin-left: 12px"
-          @change="loadData"
-        />
-        <el-button size="small" type="primary" style="margin-left: 12px" :loading="loading" @click="loadData">
-          刷新
-        </el-button>
-        <span class="date-label" v-if="data.date">{{ data.date }}</span>
+    <!-- 顶部一行：日期选择器 + 汇总数字 -->
+    <div class="top-bar">
+      <el-date-picker
+        v-model="selectedDate"
+        type="date"
+        placeholder="日期（默认今天）"
+        value-format="YYYY-MM-DD"
+        size="small"
+        style="width: 160px"
+        @change="loadData"
+      />
+      <el-button size="small" type="primary" :loading="loading" @click="loadData">刷新</el-button>
+      <div class="summary-nums">
+        <span class="num bullish">↑ 看多 {{ data.summary.bullish }} 只</span>
+        <span class="num bearish">↓ 看空 {{ data.summary.bearish }} 只</span>
+        <span class="num neutral">→ 中性 {{ data.summary.neutral }} 只</span>
       </div>
-    </el-card>
+    </div>
 
-    <!-- 股票列表 -->
+    <!-- 预测 vs 实际 表格 -->
     <el-card shadow="never" class="table-card">
-      <el-table :data="filteredItems" v-loading="loading" stripe>
+      <el-table :data="sortedItems" v-loading="loading" stripe>
         <el-table-column label="股票" width="140">
           <template #default="{ row }">
             <div class="stock-name">{{ row.stockName }}</div>
             <div class="stock-code">{{ row.stockCode }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="板块" width="120">
-          <template #default="{ row }">
-            <el-tag v-if="row.sector" size="small" type="info">{{ row.sector }}</el-tag>
-            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column label="预测" width="90">
@@ -161,7 +97,7 @@ onMounted(loadData)
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="置信度" width="80">
+        <el-table-column label="置信度" width="80" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.confidence" :type="confidenceType(row.confidence)" size="small">
               {{ row.confidence }}
@@ -169,31 +105,20 @@ onMounted(loadData)
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="当前价" width="80" align="right">
-          <template #default="{ row }">{{ row.latestClose != null ? row.latestClose.toFixed(2) : '-' }}</template>
-        </el-table-column>
-        <el-table-column label="锚位" width="80" align="right">
-          <template #default="{ row }">{{ row.anchorPrice ?? '-' }}</template>
-        </el-table-column>
-        <el-table-column label="距锚位%" width="90" align="right">
+        <el-table-column label="实际涨跌幅" width="110" align="right">
           <template #default="{ row }">
             <span
-              v-if="row.changeFromAnchor !== null && row.changeFromAnchor !== undefined"
-              :class="changeClass(row.changeFromAnchor)"
+              v-if="row.actualChangePct !== null && row.actualChangePct !== undefined"
+              :class="row.actualChangePct >= 0 ? 'positive' : 'negative'"
             >
-              {{ row.changeFromAnchor >= 0 ? '+' : '' }}{{ Number(row.changeFromAnchor).toFixed(2) }}%
+              {{ row.actualChangePct >= 0 ? '+' : '' }}{{ Number(row.actualChangePct).toFixed(2) }}%
             </span>
-            <span v-else>-</span>
+            <span v-else class="no-data">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="行情日期" width="80" align="center">
+        <el-table-column label="对错" width="60" align="center">
           <template #default="{ row }">
-            <span class="date-cell">{{ formatLatestDate(row.latestDate) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="技术信号" min-width="200">
-          <template #default="{ row }">
-            <span class="signal-text">{{ row.technicalSignal || '-' }}</span>
+            <span class="verify-icon">{{ verifyIcon(row) }}</span>
           </template>
         </el-table-column>
       </el-table>
@@ -208,54 +133,30 @@ onMounted(loadData)
   gap: 16px;
 }
 
-.summary-card .card-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 8px 0;
-}
-
-.card-num {
-  font-size: 36px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.card-label {
-  font-size: 14px;
-  margin-top: 4px;
-}
-
-.bullish .card-num,
-.bullish .card-label {
-  color: #67c23a;
-}
-
-.bearish .card-num,
-.bearish .card-label {
-  color: #f56c6c;
-}
-
-.neutral .card-num,
-.neutral .card-label {
-  color: #909399;
-}
-
-.filter-card :deep(.el-card__body) {
-  padding: 12px 16px;
-}
-
-.filter-bar {
+.top-bar {
   display: flex;
   align-items: center;
+  gap: 12px;
   flex-wrap: wrap;
-  gap: 4px;
 }
 
-.date-label {
-  margin-left: auto;
+.summary-nums {
+  display: flex;
+  gap: 16px;
+  margin-left: 8px;
+}
+
+.num {
   font-size: 13px;
-  color: #909399;
+  font-weight: 600;
+}
+
+.num.bullish { color: #67c23a; }
+.num.bearish { color: #f56c6c; }
+.num.neutral { color: #909399; }
+
+.table-card :deep(.el-card__body) {
+  padding: 0;
 }
 
 .stock-name {
@@ -265,11 +166,6 @@ onMounted(loadData)
 .stock-code {
   font-size: 12px;
   color: #909399;
-}
-
-.signal-text {
-  font-size: 12px;
-  color: #606266;
 }
 
 .positive {
@@ -282,15 +178,11 @@ onMounted(loadData)
   font-weight: 600;
 }
 
-.summary-note {
-  font-size: 12px;
-  color: #909399;
-  text-align: center;
-  margin-top: -8px;
+.no-data {
+  color: #c0c4cc;
 }
 
-.date-cell {
-  font-size: 12px;
-  color: #909399;
+.verify-icon {
+  font-size: 15px;
 }
 </style>
