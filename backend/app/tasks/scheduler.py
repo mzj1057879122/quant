@@ -7,6 +7,7 @@ from app.tasks.fetch_quotes import runFetchQuotes
 from app.tasks.detect_signals import runDetectSignals, runSendNotifications
 from app.tasks.fetch_heat import runFetchHeat
 from app.tasks.fetch_morning_brief import runFetchMorningBrief
+from app.tasks.summarize_morning_brief import runSummarizeMorningBrief
 from app.tasks.daily_prediction import runDailyPrediction
 from app.tasks.verify_predictions import runVerifyPredictions
 from app.tasks.fetch_limit_up import runFetchLimitUp
@@ -27,6 +28,15 @@ def initScheduler() -> None:
         trigger=CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
         id="fetch_morning_brief",
         name="采集盘前纪要",
+        replace_existing=True,
+    )
+
+    # 每个交易日08:35生成盘前纪要 AI 摘要（采集完后5分钟兜底，防止采集耗时较长）
+    scheduler.add_job(
+        runSummarizeMorningBrief,
+        trigger=CronTrigger(hour=8, minute=35, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        id="summarize_morning_brief",
+        name="生成盘前摘要",
         replace_existing=True,
     )
 

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
 from app.models.morning_brief import MorningBrief
+from app.tasks.summarize_morning_brief import runSummarizeMorningBrief
 from app.utils.date_helper import isTradingDay
 from app.utils.logger import setupLogger
 
@@ -188,3 +189,6 @@ def runFetchMorningBrief(targetDate: date | None = None) -> None:
         logger.error(f"盘前纪要采集任务异常 错误={e}", exc_info=True)
     finally:
         db.close()
+
+    # 采集完成后生成 AI 摘要
+    runSummarizeMorningBrief(today)

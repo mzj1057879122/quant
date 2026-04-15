@@ -12,7 +12,18 @@ const loading = ref(false)
 
 // 盘前纪要
 const latestBrief = ref(null)
-const briefExpanded = ref(false)
+
+// 将 markdown 简单渲染为 HTML（支持 **加粗** 和换行）
+function renderMarkdown(text) {
+  if (!text) return ''
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^## (.+)$/gm, '<div class="ai-summary-section-title">$1</div>')
+    .replace(/\n/g, '<br>')
+}
 
 // 统计数字
 const backtestRate = ref(null)
@@ -96,19 +107,16 @@ onMounted(loadData)
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span style="font-weight: 500">今日盘前概要 · {{ latestBrief.briefDate }}</span>
-          <div style="display: flex; gap: 8px">
-            <el-button text type="primary" @click="briefExpanded = !briefExpanded">
-              {{ briefExpanded ? '收起' : '展开' }}
-            </el-button>
-            <el-button text type="primary" @click="router.push('/brief')">查看全文</el-button>
-          </div>
+          <el-button text type="primary" @click="router.push('/brief')">查看原文</el-button>
         </div>
       </template>
-      <div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: #333">
-        <template v-if="briefExpanded">{{ latestBrief.rawContent }}</template>
-        <template v-else>
-          {{ latestBrief.rawContent?.slice(0, 300) }}{{ latestBrief.rawContent?.length > 300 ? '…' : '' }}
-        </template>
+      <!-- 优先显示 AI 摘要（markdown 渲染） -->
+      <div v-if="latestBrief.aiSummary" class="ai-summary-content"
+        v-html="renderMarkdown(latestBrief.aiSummary)">
+      </div>
+      <!-- 无 AI 摘要时显示前200字 rawContent -->
+      <div v-else style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: #555">
+        {{ latestBrief.rawContent?.slice(0, 200) }}{{ latestBrief.rawContent?.length > 200 ? '…' : '' }}
       </div>
     </el-card>
 
@@ -213,3 +221,26 @@ onMounted(loadData)
     </el-row>
   </div>
 </template>
+
+<style scoped>
+.ai-summary-content {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #333;
+}
+
+.ai-summary-content :deep(.ai-summary-section-title) {
+  font-weight: 600;
+  color: #303133;
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.ai-summary-content :deep(.ai-summary-section-title:first-child) {
+  margin-top: 0;
+}
+
+.ai-summary-content :deep(strong) {
+  color: #409eff;
+}
+</style>

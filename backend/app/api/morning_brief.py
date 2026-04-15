@@ -18,7 +18,15 @@ def getLatestBrief(
     query = db.query(MorningBrief)
     if source:
         query = query.filter(MorningBrief.source == source)
-    brief = query.order_by(MorningBrief.briefDate.desc()).first()
+    # 优先取有 aiSummary 的记录（MySQL不支持NULLS LAST，用IS NULL排序）
+    from sqlalchemy import case
+    brief = (
+        query.order_by(
+            case((MorningBrief.aiSummary.is_(None), 1), else_=0),
+            MorningBrief.briefDate.desc(),
+            MorningBrief.createdAt.desc()
+        ).first()
+    )
     if not brief:
         return {"brief": None}
     return {
