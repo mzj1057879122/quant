@@ -7,6 +7,7 @@ daily_rule_review.py
 import json
 import subprocess
 import os
+import requests
 import re
 from datetime import date, timedelta
 from collections import defaultdict
@@ -29,6 +30,46 @@ CRITICAL_THRESHOLD = 0.30
 PREDICTION_FILE = os.path.join(os.path.dirname(__file__), "daily_prediction.py")
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 
+
+
+def _notifyOpenClawAlert(alertLevel: str, overallRate: float, anomalies: list, suggestions: list, codeChanged: bool, today) -> None:
+    """规则复盘完成后推送飞书告警"""
+    token = os.environ.get("OPENCLAW_HOOKS_TOKEN")
+    url = os.environ.get("OPENCLAW_HOOKS_URL")
+    if not token or not url:
+        return
+    if alertLevel == "none":
+        return
+    
+    emoji = "🚨" if alertLevel == "critical" else "⚠️"
+    code_msg = "✅ 代码已自动优化并重启" if codeChanged else "❌ 代码未能自动修复，需要人工介入"
+    
+    lines = [
+        f"{emoji}【quant规则复盘 {today}】",
+        f"整体胜率：{overallRate:.1%}",
+        "",
+        "异常维度：",
+    ]
+    for a in anomalies:
+        lines.append(f"  {a}")
+    if suggestions:
+        lines.append("")
+        lines.append("Claude建议：")
+        for s in suggestions[:3]:
+            lines.append(f"  • {s}")
+    lines.append("")
+    lines.append(code_msg)
+    
+    text = "\n".join(lines)
+    try:
+        requests.post(
+            url,
+            json={"text": text, "mode": "now"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+    except Exception as e:
+        pass
 
 def runDailyRuleReview() -> None:
     today = date.today()
@@ -130,6 +171,9 @@ def runDailyRuleReview() -> None:
         if codeChanged:
             logger.info(f"规则已自动升级并重启 date={today}")
         logger.info(f"规则复盘完成 date={today} total={total} rate={overallRate:.1%} alert={alertLevel} codeChanged={codeChanged}")
+
+        # 推送飞书告警
+        _notifyOpenClawAlert(alertLevel, overallRate, anomalies, suggestions, codeChanged, today)
 
     except Exception as e:
         db.rollback()
