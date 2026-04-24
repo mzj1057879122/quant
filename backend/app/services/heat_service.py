@@ -22,7 +22,7 @@ def fetchXueqiuHeat() -> dict[str, dict]:
                 code = str(getattr(row, "股票代码", ""))
                 if not code:
                     continue
-                count = int(getattr(row, "关注", 0) or 0)
+                raw = getattr(row, "关注", 0); count = int(raw) if raw == raw and raw is not None else 0
                 result[code] = {"followCount": count, "followRank": rank, "tweetCount": 0, "tweetRank": 0}
             logger.info(f"雪球关注排行拉取完成 count={len(result)}")
     except Exception as e:
@@ -38,7 +38,7 @@ def fetchXueqiuHeat() -> dict[str, dict]:
                 code = str(getattr(row, "股票代码", ""))
                 if not code:
                     continue
-                count = int(getattr(row, "关注", 0) or 0)
+                raw = getattr(row, "关注", 0); count = int(raw) if raw == raw and raw is not None else 0
                 if code in result:
                     result[code]["tweetCount"] = count
                     result[code]["tweetRank"] = rank
