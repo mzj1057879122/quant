@@ -31,7 +31,7 @@ SUMMARIZE_PROMPT_TEMPLATE = """你是A股盘前分析助手。请从以下盘前
 def _callClaude(prompt: str) -> str | None:
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--max-turns", "1"],
+            ["/home/zejianma/.nvm/versions/node/v24.13.0/bin/claude", "-p", prompt, "--max-turns", "1"],
             capture_output=True, text=True, timeout=60
         )
         if result.returncode != 0:
