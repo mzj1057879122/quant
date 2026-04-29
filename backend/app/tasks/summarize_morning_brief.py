@@ -1,5 +1,7 @@
+import os
 import subprocess
 from datetime import date
+from pathlib import Path
 
 from app.database import SessionLocal
 from app.models.morning_brief import MorningBrief
@@ -27,15 +29,37 @@ SUMMARIZE_PROMPT_TEMPLATE = """你是A股盘前分析助手。请从以下盘前
 {content}
 """
 
+CLAUDE_BIN = "/home/zejianma/.nvm/versions/node/v24.13.0/bin/claude"
+
+
+def _buildEnv() -> dict:
+    """构建包含 ANTHROPIC 认证的环境变量字典，优先读 .env 文件。"""
+    env = dict(os.environ)
+
+    # 尝试从 .env 文件读取（覆盖）
+    env_file = Path(__file__).parent.parent.parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key:
+                    env[key] = val
+
+    return env
+
 
 def _callClaude(prompt: str) -> str | None:
     try:
+        env = _buildEnv()
         result = subprocess.run(
-            ["/home/zejianma/.nvm/versions/node/v24.13.0/bin/claude", "-p", prompt, "--max-turns", "1"],
-            capture_output=True, text=True, timeout=60
+            [CLAUDE_BIN, "-p", prompt, "--max-turns", "1", "--permission-mode", "bypassPermissions"],
+            capture_output=True, text=True, timeout=90, env=env
         )
         if result.returncode != 0:
-            logger.error(f"Claude CLI 调用失败 stderr={result.stderr[:500]}")
+            logger.error(f"Claude CLI 调用失败 returncode={result.returncode} stderr={result.stderr[:500]}")
             return None
         output = result.stdout.strip()
         return output if output else None
